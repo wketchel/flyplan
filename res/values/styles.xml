@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Shown while the app starts, before the planner page appears. -->
+    <style name="Launch" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@drawable/splash</item>
+        <item name="android:statusBarColor">#0b3a4a</item>
+        <item name="android:navigationBarColor">#0b3a4a</item>
+    </style>
+</resources>
