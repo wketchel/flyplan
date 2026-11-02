@@ -26,7 +26,7 @@ const DEFAULTS = {
   interval: { on: false, type: 'time', auto: false, value: 3, from: 0, to: -1, method: 'camera' },
   poi: { radius: 30, points: 12, height: 0, cw: true, start: 180, gimbalAuto: true, gimbal: -30, loop: true, rings: 1, altStep: 15.24, radStep: 0, climb: 'step' },
   shape: null, poiCenter: null, mode: 'waypoint', wps: [], sel: -1, libId: null,
-  droneEnum: null, droneSub: null, home: null, segs: [], seg: 0,
+  droneEnum: null, droneSub: null, home: null, segs: [], seg: 0, hzClimb: true, hzAvoid: true, hzMargin: 10,
   view: { c: [39.5, -98.35], z: 4 },
 };
 
@@ -100,10 +100,11 @@ function centroid(pts) { let a = 0, b = 0; pts.forEach(p => { a += p[0]; b += p[
 function polyArea(xy) { let s = 0; for (let i = 0; i < xy.length; i++) { const a = xy[i], b = xy[(i + 1) % xy.length]; s += a[0] * b[1] - b[0] * a[1]; } return Math.abs(s / 2); }
 
 /* Lawnmower sweep. Lines run along bearing `ang` (0 = north–south lines, 90 = east–west). */
-function sweep(P, ang, sp, ext) {
+function sweep(P, ang, sp, ext, holes) {
   ext = ext || 0;
   const t = ang * Math.PI / 180, s = Math.sin(t), c = Math.cos(t);
-  const Q = P.map(([x, y]) => [x * s + y * c, -x * c + y * s]);
+  const rot = R => R.map(([x, y]) => [x * s + y * c, -x * c + y * s]);
+  const Q = rot(P), rings = [Q].concat((holes || []).map(rot));
   let vmin = Infinity, vmax = -Infinity;
   Q.forEach(q => { vmin = Math.min(vmin, q[1]); vmax = Math.max(vmax, q[1]); });
   const width = vmax - vmin;
@@ -112,20 +113,30 @@ function sweep(P, ang, sp, ext) {
   const lines = [];
   for (let i = 0; i < n; i++) {
     const v = vmin + off + i * sp, xs = [];
-    for (let k = 0; k < Q.length; k++) {
-      const a = Q[k], b = Q[(k + 1) % Q.length];
-      if ((a[1] <= v && b[1] > v) || (b[1] <= v && a[1] > v)) xs.push(a[0] + (v - a[1]) * (b[0] - a[0]) / (b[1] - a[1]));
-    }
-    xs.sort((p, q) => p - q);
+    rings.forEach((R, ri) => {
+      for (let k = 0; k < R.length; k++) {
+        const a = R[k], b = R[(k + 1) % R.length];
+        if ((a[1] <= v && b[1] > v) || (b[1] <= v && a[1] > v)) xs.push({ x: a[0] + (v - a[1]) * (b[0] - a[0]) / (b[1] - a[1]), ring: ri });
+      }
+    });
+    xs.sort((p, q) => p.x - q.x);
     const segs = [];
-    for (let k = 0; k + 1 < xs.length; k += 2) if (xs[k + 1] - xs[k] > 0.5) segs.push([xs[k], xs[k + 1]]);
+    // Inside = inside the area and outside every hole (holes are no-fly zones the lines stop at, with no run-in).
+    const par = new Array(rings.length).fill(false);
+    let start = null, startHole = false;
+    const inside = () => par[0] && par.every((v2, k) => k === 0 || !v2);
+    xs.forEach(e => {
+      const was = inside(); par[e.ring] = !par[e.ring]; const now = inside();
+      if (!was && now) { start = e.x; startHole = e.ring > 0; }
+      if (was && !now && e.x - start > 0.5) segs.push([start, e.x, startHole, e.ring > 0]);
+    });
     if (segs.length) lines.push({ v, segs });
   }
   const pts = [];
   lines.forEach((L, i) => {
     let segs = L.segs.map(g => g.slice());
-    if (i % 2) segs = segs.reverse().map(g => [g[1], g[0]]);
-    segs.forEach(g => { const dir = g[1] >= g[0] ? 1 : -1; pts.push([g[0] - dir * ext, L.v], [g[1] + dir * ext, L.v]); });
+    if (i % 2) segs = segs.reverse().map(g => [g[1], g[0], g[3], g[2]]);
+    segs.forEach(g => { const dir = g[1] >= g[0] ? 1 : -1; pts.push([g[0] - dir * (g[2] ? 0 : ext), L.v], [g[1] + dir * (g[3] ? 0 : ext), L.v]); });
   });
   return { pts: pts.map(([u, v]) => [u * s - v * c, u * c + v * s]), lines: lines.length };
 }
@@ -161,7 +172,7 @@ function regen() {
   if (S.mode === 'grid' && S.shape && S.shape.pts.length >= 3) {
     const cov = coverage();
     const pr = projector(centroid(S.shape.pts));
-    const P = S.shape.pts.map(pr.xy);
+    const P = S.shape.pts.map(pr.xy), holes = hzSurveyHoles(pr);
     let ang;
     if (S.dir === 'auto') {
       let best = Infinity;
@@ -176,11 +187,11 @@ function regen() {
       });
       if (!cands.length) cands.push(0);
       cands.forEach(a => {
-        const t = pathTime(sweep(P, a, cov.spacing, S.runIn).pts, S.speed);
+        const t = pathTime(sweep(P, a, cov.spacing, S.runIn, holes).pts, S.speed);
         if (t < best - 1e-6) { best = t; ang = a; }
       });
     } else ang = S.dir === 'custom' ? ((S.angle % 180) + 180) % 180 : DIRS[S.dir];
-    let res = sweep(P, ang, cov.spacing, S.runIn);
+    let res = sweep(P, ang, cov.spacing, S.runIn, holes);
     let pts = res.pts;
     if (S.home && pts.length > 1) {                          // start at the corner nearest the pilot
       const h = pr.xy(S.home);
@@ -189,7 +200,7 @@ function regen() {
     }
     if (S.reverse) pts = pts.slice().reverse();
     S.wps = pts.map((q, i) => newWp(pr.ll(q), { gimbal: i === 0 ? S.gridGimbal : null }));
-    gridInfo = { angle: ang, lines: res.lines, area: polyArea(P), full: S.wps.map(w => [w.lat, w.lng]), parts: [] };
+    gridInfo = { angle: ang, lines: res.lines, area: polyArea(P), full: S.wps.map(w => [w.lat, w.lng]), parts: [], holes: holes.filter(H => H.some(q => hzInside(q, P)) || P.some(q => hzInside(q, H))).length };
     S.interval.from = 0; S.interval.to = -1;
     if (S.split && S.split.on && !multi()) {
       gridInfo.parts = computeParts(S.wps);
@@ -463,6 +474,7 @@ function stats() {
     }
   }
   if (S.mode === 'grid' && S.split && S.split.on && S.split.sel < 0 && gridInfo && gridInfo.parts.length > 1) out.warns.push(['bad', 'Showing all parts. Pick one part under Split into parts before sending.']);
+  hzWarns(missionPoints(), out.warns);
   if (out.points > 200) out.warns.push(['bad', out.points + ' waypoints' + (out.points > W.length ? ' including photo points' : '') + '. DJI Fly may reject missions over ~200 points — raise the interval, fly higher or split the area.']);
   if (out.time > 30 * 60) out.warns.push(['', 'Longer than ~30 min. Plan a battery swap or split the area.']);
   if (Math.max(S.speed, ...W.map(wpSpeed)) > 15) out.warns.push(['', 'Speeds above 15 m/s (34 mph) may be capped by DJI Fly.']);
@@ -491,7 +503,7 @@ function statsMulti() {
   const seen = {};
   per.forEach((p, i) => {
     if (p.points < 2) out.warns.push(['', 'Segment ' + (i + 1) + ' has nothing drawn yet. Draw it or delete it.']);
-    p.warns.forEach(([c, t]) => { if (/waypoints|Longer than|Add at least|Showing all parts|Terrain|terrain/.test(t) || seen[t]) return; seen[t] = 1; out.warns.push([c, 'Segment ' + (i + 1) + ': ' + t]); });
+    p.warns.forEach(([c, t]) => { if (/waypoints|Longer than|Add at least|Showing all parts|Terrain|terrain|hazard|no-fly|too low|Hazard/.test(t) || seen[t]) return; seen[t] = 1; out.warns.push([c, 'Segment ' + (i + 1) + ': ' + t]); });
   });
   if (per.some(p => p.cam)) out.warns.push(['', 'A survey here uses Timed Shot. In a combined mission it keeps shooting during the other segments and connecting legs too.']);
   if (S.terrain.on) {
@@ -504,6 +516,7 @@ function statsMulti() {
       if (mp.terrainInfo.clamped) out.warns.push(['bad', 'Ground drops more than your flying height below takeoff in places. Those points were held at takeoff level.']);
     }
   }
+  hzWarns(mp, out.warns);
   if (out.points > 200 && !(parts.length > 1 && S.split.sel < 0)) out.warns.push(['bad', out.points + ' points' + (pt ? ' in this part' : ' in total') + '. DJI Fly may reject missions over ~200 points. Turn on Split into parts' + (pt ? ' with a lower time limit' : '') + ', or trim a segment.']);
   if (out.time > 30 * 60 && !(parts.length > 1 && S.split.sel < 0)) out.warns.push(['', 'Longer than ~30 min. Turn on Split into parts or plan a battery swap.']);
   return out;
@@ -593,12 +606,12 @@ function keepProfile(d, A, tol) {
 function missionPoints() {
   if (mpCache) return mpCache;
   const P = allFlightPoints();
-  if (!S.terrain || !S.terrain.on || !P.length) return (mpCache = P);
+  if (!S.terrain || !S.terrain.on || !P.length) return (mpCache = hzApply(P));
   const tk = S.terrain.takeoff;
-  if (!tk) { P.terrainState = 'notakeoff'; return (mpCache = P); }
+  if (!tk) { P.terrainState = 'notakeoff'; return (mpCache = hzApply(P)); }
   const lats = P.map(p => p.w.lat).concat(tk[0]), lngs = P.map(p => p.w.lng).concat(tk[1]);
   const st = demEnsure(Math.min(...lats), Math.min(...lngs), Math.max(...lats), Math.max(...lngs));
-  if (st !== 'ok') { P.terrainState = st; return (mpCache = P); }
+  if (st !== 'ok') { P.terrainState = st; return (mpCache = hzApply(P)); }
   const e0 = elevAt(tk[0], tk[1]), tol = Math.max(1, S.terrain.tol || 4.5);
   const out = [], info = { e0, gMin: Infinity, gMax: -Infinity, minH: Infinity, maxH: -Infinity, added: 0, clamped: false };
   const height = (g, agl) => {
@@ -630,7 +643,7 @@ function missionPoints() {
     });
   }
   out.terrainState = 'ok'; out.terrainInfo = info;
-  return (mpCache = out);
+  return (mpCache = hzApply(out));
 }
 
 /* In a survey, waypoints come in pairs: even legs (0→1, 2→3 …) are the flight lines, odd legs are the turn hops between
@@ -923,6 +936,9 @@ function renderMap() {
   });
   if (multi() && selectedPart()) { const pp = allFlightPoints().map(p => [p.w.lat, p.w.lng]); if (pp.length > 1) L.polyline(pp, { color: '#ffffff', weight: 8, opacity: 0.4, interactive: false }).addTo(routeLayer); }
   if (W.length > 1) L.polyline(W.map(w => [w.lat, w.lng]), { color: multi() ? SEG_COLORS[S.seg % SEG_COLORS.length] : '#ff7a2e', weight: 3, opacity: 0.95 }).addTo(routeLayer);
+  const hzmp = hzShapes().length ? missionPoints() : null, hz = hzmp && hzmp.hazard;
+  if (hz && (hz.detours || hz.climbs.length)) L.polyline(hzmp.map(p => [p.w.lat, p.w.lng]), { color: '#ffffff', weight: 2, dashArray: '2 6', opacity: 0.9, interactive: false }).addTo(routeLayer);
+  if (hz) hz.problems.forEach(p => L.marker(p.at, { interactive: false, zIndexOffset: 2000, icon: L.divIcon({ className: '', html: '<div class="hzbad">!</div>', iconSize: [26, 26], iconAnchor: [13, 13] }) }).addTo(routeLayer));
   const rg = intervalRange();
   if (rg && !usesPhotoPoints()) L.polyline(W.slice(rg[0], rg[1] + 1).map(w => [w.lat, w.lng]), { color: '#ffd43b', weight: 2, dashArray: '2 8', opacity: 0.9, interactive: false }).addTo(routeLayer);
   else if (rg) {
@@ -1096,6 +1112,18 @@ function renderPanel() {
     h += '</section>';
   }
 
+  // Hazards
+  if (hzShapes().length) {
+    const mp = missionPoints(), sum = hzSummary(mp), np = mp.hazard ? mp.hazard.problems.length : 0;
+    h += `<section class="grp"><h3>Hazards · ${hzShapes().length}</h3>
+      ${check('Climb over fly-over hazards (power lines, towers…)', 'hzClimb')}
+      ${check('Route around no-fly zones (surveys skip them)', 'hzAvoid')}
+      <div class="row">${field('Clearance above hazards', 'hzMargin', 'len')}<div></div></div>
+      ${sum ? `<p class="note"><b>${sum}.</b></p>` : (S.wps.length || multi()) && !np ? '<p class="note">The route stays clear of every hazard.</p>' : ''}
+      ${np ? `<div class="warn bad">⚠ ${np} hazard problem${np === 1 ? '' : 's'}. See the warnings below.</div>` : ''}
+      <p class="note">Mark hazards by editing a boundary or line in Features. Wires are hard for the drone's sensors to see, so plan the clearance here rather than relying on obstacle avoidance.</p></section>`;
+  }
+
   // Survey grid
   if (S.mode === 'grid') {
     const cov = coverage();
@@ -1237,7 +1265,7 @@ function segPanel(st) {
 }
 function scrollToWp(i) { setTimeout(() => { const e = document.getElementById('wp' + i); if (e) e.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }, 30); }
 
-const REGEN_KEYS = /^(alt|speed|camera|front|side|spacing|spacingAuto|dir|angle|gridGimbal|runIn|pathStyle|split\.|interval\.|poi\.)/;
+const REGEN_KEYS = /^(hzAvoid|alt|speed|camera|front|side|spacing|spacingAuto|dir|angle|gridGimbal|runIn|pathStyle|split\.|interval\.|poi\.)/;
 panel.addEventListener('input', e => {
   const t = e.target; if (t.dataset.k === 'range') t.nextElementSibling.textContent = t.value + '°';
 });
@@ -1277,6 +1305,7 @@ panel.addEventListener('change', e => {
   } else {
     set(path, v);
     if (path === 'interval.on' && v && S.mode !== 'grid') S.interval.auto = false;
+    if (path === 'hzMargin') S.hzMargin = Math.min(60, Math.max(0, v));
     if (path === 'interval.method' && v === 'camera') { S.interval.auto = false; S.interval.type = 'time'; S.interval.value = 3; }
     if (path === 'interval.type' && !S.interval.auto) S.interval.value = v === 'time' ? 3 : 15;
     if (S.mode !== 'waypoint' && REGEN_KEYS.test(path)) regen();
@@ -1332,7 +1361,8 @@ function toast(msg) { const t = document.getElementById('toast'); t.textContent 
 
 /* ---------- export / native bridge ---------- */
 function fileName() { return (S.name || 'mission').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '_') || 'mission'; }
-function saveKmz() {
+function saveKmz() { openSend('save'); }
+function doSaveKmz() {
   let k; try { k = buildKmz(); } catch (e) { return toast(e.message); }
   if (native) native.saveKmz(fileName(), k.template, k.waylines);
   else toast('Saving files works in the Android app.');
@@ -1421,10 +1451,23 @@ function preflightChecklist() {
 
 const sheet = document.getElementById('sheet');
 let send = { step: 'intro', missions: [], pick: null, status: '', cls: '' };
-function openSend() { sheetMode = 'send'; send = { step: 'intro', missions: [], pick: null, status: '', cls: '' }; renderSheet(); sheet.hidden = false; }
+function openSend(after) {
+  sheetMode = 'send'; send = { step: 'intro', missions: [], pick: null, status: '', cls: '', after: after || 'send' };
+  const hz = missionPoints().hazard;
+  if (hz && hz.problems.length) send.step = 'hazard';
+  else if (after === 'save') { doSaveKmz(); return; }
+  renderSheet(); sheet.hidden = false;
+}
 function renderSheet() {
   let h = '<div class="card">';
   const onCtl = !!(native && native.isOnController && native.isOnController());
+  if (send.step === 'hazard') {
+    const hz = missionPoints().hazard;
+    h += `<h2>Hazards on this route</h2><div class="mlist">${hz.problems.map((p, i) => `<div class="mitem"><div style="flex:1"><b>${esc(p.name)}</b><small>${p.kind === 'low' ? 'Passes ' + fmtLen(p.alt) + ' above takeoff; needs ' + fmtLen(p.need) : p.kind === 'inside' ? 'A waypoint is inside this no-fly zone' : 'Route enters this no-fly zone'}</small></div><button class="btn small" data-s="hzgo" data-i="${i}">Show</button></div>`).join('')}</div>
+      <p class="note">Fix these first: turn on <b>Climb over</b> and <b>Route around</b> under Hazards, move the waypoints, or change the hazard. Sending anyway is at your own risk.</p>
+      <div class="btns"><button class="btn" data-s="close">Fix the route</button><button class="btn danger" data-s="hzok">${send.after === 'save' ? 'Save anyway' : 'Send anyway'}</button></div>`;
+    sheet.innerHTML = h + '</div>'; return;
+  }
   if (send.step === 'access') {
     h += `<h2>Allow access to DJI Fly's missions</h2>
       <p class="note">Android needs your OK once before this app can write into DJI Fly's mission folder.</p>
@@ -1483,6 +1526,8 @@ sheet.addEventListener('click', e => {
   if (r) { send.pick = Number(r.value); renderSheet(); return; }
   const b = e.target.closest('[data-s]'); if (!b || b.disabled) return;
   if (b.dataset.s === 'close') sheet.hidden = true;
+  else if (b.dataset.s === 'hzgo') { const p = missionPoints().hazard.problems[+b.dataset.i]; if (p) { sheet.hidden = true; map.setView(p.at, Math.max(map.getZoom(), 17)); } }
+  else if (b.dataset.s === 'hzok') { if (send.after === 'save') { sheet.hidden = true; doSaveKmz(); } else { send.step = 'intro'; renderSheet(); } }
   else if (b.dataset.s === 'grant') native.requestFolderAccess();
   else if (b.dataset.s === 'find') {
     if (!native || !native.findController) { send.status = PC ? 'Sending to the controller works from the tablet app. Save the mission in Missions; sync brings it to the tablet, then send it from there. Or use Save KMZ and copy the file yourself.' : 'Sending to the controller works in the Android app.'; send.cls = 'bad'; return renderSheet(); }
@@ -2406,13 +2451,14 @@ const SH_TYPES = {
     bedding: { label: 'Bedding area', color: '#ff922b', fill: 0.14 },
     sanctuary: { label: 'Sanctuary / no hunting', color: '#fa5252', fill: 0.12, dash: '10 6' },
     water: { label: 'Water', color: '#4dabf7', fill: 0.25 },
+    nofly: { label: 'No-fly zone', color: '#e03131', fill: 0.18, dash: '6 5', hz: 'nofly' },
     other: { label: 'Other area', color: '#cc5de8', fill: 0.10 },
   },
   line: {
     fence: { label: 'Fence', color: '#f1f3f5', dash: '10 6' },
     road: { label: 'Road / trail', color: '#ffa94d' },
     creek: { label: 'Creek / drainage', color: '#4dabf7' },
-    power: { label: 'Power line', color: '#ff6b6b', dash: '3 7' },
+    power: { label: 'Power line', color: '#ff6b6b', dash: '3 7', hz: 'over' },
     other: { label: 'Other line', color: '#cc5de8' },
   },
 };
@@ -2420,7 +2466,9 @@ let shapes = shLoad(), shEditId = null, shOpen = null, shArmed = false;
 const shpLayer = L.layerGroup().addTo(map);
 const shRenderer = L.canvas({ padding: 0.3, tolerance: 12 });
 function shLoad() { try { return JSON.parse(localStorage.getItem('planner.shapes')) || []; } catch (e) { return []; } }
-function shSave() { syStamp('shapes', shapes); try { localStorage.setItem('planner.shapes', JSON.stringify(shapes)); } catch (e) { toast('Could not save: storage is full'); } }
+let hzSig = '';
+function hzSignature() { return JSON.stringify(hzShapes().map(s => [s.id, s.hazard, s.top, s.buf, s.kind, s.pts])); }
+function shSave() { syStamp('shapes', shapes); try { localStorage.setItem('planner.shapes', JSON.stringify(shapes)); } catch (e) { toast('Could not save: storage is full'); } const sig = hzSignature(); if (sig !== hzSig) { hzSig = sig; hzChanged(); } }
 function shType(s) { return (SH_TYPES[s.kind] || SH_TYPES.area)[s.type] || SH_TYPES[s.kind].other; }
 function shLength(pts, closed) { let d = 0; for (let i = 1; i < pts.length; i++) d += hav(pts[i - 1], pts[i]); if (closed && pts.length > 2) d += hav(pts[pts.length - 1], pts[0]); return d; }
 function shArea(pts) { return pts.length > 2 ? polyArea(pts.map(projector(centroid(pts)).xy)) : 0; }
@@ -2437,6 +2485,12 @@ function renderShapes() {
     const lyr = L.polyline(closed(), { renderer: shRenderer, color: t.color, weight: editing ? 4 : 3, opacity: 0.95, dashArray: t.dash || null, interactive: !locked }).addTo(shpLayer);
     if (!locked) lyr.on('click', ev => { L.DomEvent.stop(ev); openShapeEditor(s.id); });
     const redraw = () => { lyr.setLatLngs(closed()); if (fill) fill.setLatLngs(s.pts); };
+    if ((s.hazard === 'over' || s.hazard === 'nofly') && s.pts.length >= (s.kind === 'area' ? 3 : 2)) {
+      const pr = projector(centroid(s.pts)), d = HZ_DEFAULTS[s.hazard], buf = s.buf != null ? s.buf : d.buf;
+      if (buf > 0) L.polygon(hzBuffer(s.pts.map(pr.xy), s.kind === 'area', buf).map(pr.ll), { color: '#e03131', weight: 1, opacity: 0.6, dashArray: '4 4', fillColor: '#e03131', fillOpacity: s.hazard === 'nofly' ? 0.16 : 0.10, interactive: false }).addTo(shpLayer);
+      const at = s.kind === 'area' ? centroid(s.pts) : s.pts[Math.floor((s.pts.length - 1) / 2)];
+      L.marker(at, { interactive: false, icon: L.divIcon({ className: '', html: `<div class="hzlabel">${s.hazard === 'nofly' ? '⛔ No-fly' : '⚡ ' + fmtLen(s.top != null ? s.top : d.top)}</div>`, iconSize: [110, 20], iconAnchor: [55, -6] }) }).addTo(shpLayer);
+    }
     if (mkVis.labels && s.name) {
       const at = s.kind === 'area' ? centroid(s.pts) : s.pts[Math.floor((s.pts.length - 1) / 2)];
       L.marker(at, { interactive: false, icon: L.divIcon({ className: '', html: `<div class="shlabel" style="color:${t.color}">${esc(s.name)}</div>`, iconSize: [160, 18], iconAnchor: [80, 9] }) }).addTo(shpLayer);
@@ -2465,6 +2519,13 @@ function renderShapeEditor() {
     <label class="f"><span>Name</span><div class="in"><input type="text" id="shname" value="${esc(s.name)}" placeholder="${esc(shType(s).label)}"></div></label>
     <label class="f"><span>Notes</span><div class="in"><textarea id="shnotes" rows="2">${esc(s.notes)}</textarea></div></label>
     ${phStrip(s, 's')}
+    <h3 class="subh">Flight hazard</h3>
+    <div class="mktypes">${[['none', 'Not a hazard'], ['over', 'Fly over only'], ['nofly', 'No-fly zone']].map(([k, l]) => `<button class="mkt${(s.hazard || 'none') === k ? ' on' : ''}" data-sh="hz" data-v="${k}"><span>${l}</span></button>`).join('')}</div>
+    ${s.hazard === 'over' ? `<div class="row"><label class="f"><span>Height of its top (above ground)</span><div class="in"><input type="number" inputmode="decimal" id="shtop" value="${r0(toLen(s.top != null ? s.top : HZ_DEFAULTS.over.top))}"><em>${LEN()}</em></div></label>
+      <label class="f"><span>Keep-away distance</span><div class="in"><input type="number" inputmode="decimal" id="shbuf" value="${r0(toLen(s.buf != null ? s.buf : HZ_DEFAULTS.over.buf))}"><em>${LEN()}</em></div></label></div>
+      <p class="note">Within the keep-away distance, routes stay at least the clearance margin (Hazards, in the mission panel) above this height.</p>` : ''}
+    ${s.hazard === 'nofly' ? `<div class="row"><label class="f"><span>Keep-away distance</span><div class="in"><input type="number" inputmode="decimal" id="shbuf" value="${r0(toLen(s.buf != null ? s.buf : HZ_DEFAULTS.nofly.buf))}"><em>${LEN()}</em></div></label><div></div></div>
+      <p class="note">Missions never enter this ${s.kind === 'area' ? 'area' : 'line'} or come within the keep-away distance, at any height.</p>` : ''}
     <p class="note"><b>${shSize(s)}</b> · ${s.pts.length} points</p>
     <div class="btns" style="margin-bottom:8px"><button class="btn small" data-sh="edit">Move corners</button>${s.kind === 'area' ? '<button class="btn small" data-sh="survey">Use as survey area</button>' : ''}<button class="btn small" data-sh="go">Center map</button></div>
     <div class="btns"><button class="btn danger" data-sh="del">${shArmed ? 'Tap again to delete' : 'Delete'}</button><button class="btn primary" data-sh="done">Done</button></div></div>`;
@@ -2475,7 +2536,8 @@ function shapeClick(e) {
   const b = e.target.closest('button[data-sh]'); if (!b) return;
   const s = shapes.find(x => x.id === shOpen.id); if (!s) return;
   const k = b.dataset.sh;
-  if (k === 'type') { s.type = b.dataset.v; shSave(); renderShapes(); renderShapeEditor(); return; }
+  if (k === 'type') { s.type = b.dataset.v; const d = SH_TYPES[s.kind][s.type].hz; if (d && !s.hazard) { s.hazard = d; s.top = HZ_DEFAULTS[d].top; s.buf = HZ_DEFAULTS[d].buf; } shSave(); renderShapes(); renderShapeEditor(); return; }
+  if (k === 'hz') { s.hazard = b.dataset.v === 'none' ? null : b.dataset.v; if (s.hazard) { if (s.top == null) s.top = HZ_DEFAULTS[s.hazard].top; if (s.buf == null) s.buf = HZ_DEFAULTS[s.hazard].buf; } shSave(); renderShapes(); renderShapeEditor(); return; }
   if (k === 'done') { sheet.hidden = true; return; }
   if (k === 'del') { if (shArmed) { shapes = shapes.filter(x => x.id !== s.id); shSave(); renderShapes(); sheet.hidden = true; toast('Deleted'); } else { shArmed = true; renderShapeEditor(); } return; }
   if (k === 'go') { sheet.hidden = true; map.fitBounds(L.latLngBounds(s.pts).pad(0.15)); return; }
@@ -2486,6 +2548,7 @@ function shapeChange(t) {
   const s = shapes.find(x => x.id === shOpen.id); if (!s) return;
   if (t.id === 'shname') s.name = t.value.trim();
   else if (t.id === 'shnotes') s.notes = t.value;
+  else if (t.id === 'shtop' || t.id === 'shbuf') { const v = Number(t.value); if (!isFinite(v) || t.value === '') return renderShapeEditor(); s[t.id === 'shtop' ? 'top' : 'buf'] = Math.min(300, Math.max(0, fromLen(v))); }
   shSave(); renderShapes();
 }
 /* ----- KML ----- */
@@ -2916,6 +2979,209 @@ async function phGC() {
   } catch (e) {}
 }
 
+/* ---------- flight hazards ----------
+   Any boundary or line can be a hazard. "Fly over only" (power lines, towers, tall trees) means the route must stay at
+   least the clearance margin above the hazard's top inside its keep-away distance. "No-fly" means the route must never
+   enter it at any height. The finished route (after terrain following) is adjusted automatically: legs that would
+   cross a no-fly zone detour around it, surveys skip no-fly zones, and legs over a fly-over hazard climb before it and
+   come back down after. Whatever can't be fixed is reported and blocks sending until you confirm.
+   Heights compare like for like: ground elevation (USGS) + the hazard's height vs. takeoff ground + the route height. */
+const HZ_DEFAULTS = { over: { top: 15.24, buf: 15.24 }, nofly: { top: 0, buf: 10 } };
+function hzShapes() { return shapes.filter(s => (s.hazard === 'over' || s.hazard === 'nofly') && s.pts && s.pts.length >= (s.kind === 'area' ? 3 : 2)); }
+function hzName(s) { return s.name || shType(s).label; }
+/* Outline of a shape grown by r metres, in a local x/y frame (metres). Areas grow outward; lines become a band. */
+function hzBuffer(xy, closed, r) {
+  const n = xy.length, unit = (x, y) => { const l = Math.hypot(x, y) || 1; return [x / l, y / l]; };
+  if (closed) {
+    let a = 0; for (let i = 0; i < n; i++) { const p = xy[i], q = xy[(i + 1) % n]; a += p[0] * q[1] - q[0] * p[1]; }
+    const P = a < 0 ? xy.slice().reverse() : xy;      // counter-clockwise, so the right-hand normal points outward
+    if (r <= 0) return P.map(p => p.slice());
+    return P.map((p, i) => {
+      const pr = P[(i - 1 + n) % n], nx = P[(i + 1) % n];
+      const e1 = unit(p[0] - pr[0], p[1] - pr[1]), e2 = unit(nx[0] - p[0], nx[1] - p[1]);
+      const n1 = [e1[1], -e1[0]], n2 = [e2[1], -e2[0]], m = unit(n1[0] + n2[0], n1[1] + n2[1]);
+      const k = Math.min(3, 1 / Math.max(0.34, m[0] * n1[0] + m[1] * n1[1]));
+      return [p[0] + m[0] * r * k, p[1] + m[1] * r * k];
+    });
+  }
+  const L = [], R = [];
+  for (let i = 0; i < n; i++) {
+    const pr = xy[Math.max(0, i - 1)], nx = xy[Math.min(n - 1, i + 1)];
+    const e1 = i > 0 ? unit(xy[i][0] - pr[0], xy[i][1] - pr[1]) : unit(nx[0] - xy[i][0], nx[1] - xy[i][1]);
+    const e2 = i < n - 1 ? unit(nx[0] - xy[i][0], nx[1] - xy[i][1]) : e1;
+    const n1 = [-e1[1], e1[0]], n2 = [-e2[1], e2[0]], m = unit(n1[0] + n2[0], n1[1] + n2[1]);
+    const k = Math.min(3, 1 / Math.max(0.34, m[0] * n1[0] + m[1] * n1[1]));
+    let p = xy[i];
+    if (i === 0) p = [p[0] - e2[0] * r, p[1] - e2[1] * r];                 // square caps past each end
+    if (i === n - 1) p = [p[0] + e1[0] * r, p[1] + e1[1] * r];
+    L.push([p[0] + m[0] * r * k, p[1] + m[1] * r * k]); R.push([p[0] - m[0] * r * k, p[1] - m[1] * r * k]);
+  }
+  return L.concat(R.reverse());
+}
+function hzInside(q, P) {
+  let c = false;
+  for (let i = 0, j = P.length - 1; i < P.length; j = i++) {
+    const a = P[i], b = P[j];
+    if ((a[1] > q[1]) !== (b[1] > q[1]) && q[0] < (b[0] - a[0]) * (q[1] - a[1]) / (b[1] - a[1]) + a[0]) c = !c;
+  }
+  return c;
+}
+function hzBox(P) { let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity; P.forEach(p => { a = Math.min(a, p[0]); b = Math.min(b, p[1]); c = Math.max(c, p[0]); d = Math.max(d, p[1]); }); return [a, b, c, d]; }
+function hzBoxHit(A, B, bx) { return !(Math.max(A[0], B[0]) < bx[0] || Math.min(A[0], B[0]) > bx[2] || Math.max(A[1], B[1]) < bx[1] || Math.min(A[1], B[1]) > bx[3]); }
+/* Hazards in a local frame. extra grows each outline (used for detour paths and survey holes). */
+function hzZones(pr, extra) {
+  return hzShapes().map(s => {
+    const d = HZ_DEFAULTS[s.hazard], buf = Math.max(0, s.buf != null ? s.buf : d.buf), top = Math.max(0, s.top != null ? s.top : d.top);
+    const xy = s.pts.map(pr.xy);
+    const Q = hzBuffer(xy, s.kind === 'area', buf), Qx = extra ? hzBuffer(xy, s.kind === 'area', buf + extra) : Q;
+    return { s, kind: s.hazard, top, buf, Q, Qx, box: hzBox(Q), boxX: hzBox(Qx) };
+  });
+}
+/* Survey holes: no-fly zones the grid lines should stop at (in the survey's own frame). */
+function hzSurveyHoles(pr) { return S.hzAvoid === false ? [] : hzZones(pr, 4).filter(z => z.kind === 'nofly').map(z => z.Qx); }
+/* Shortest way around polygon Q between where A→B enters and leaves it; null if A→B doesn't cross it. */
+function hzDetour(A, B, Q) {
+  const n = Q.length, hits = [];
+  const dx = B[0] - A[0], dy = B[1] - A[1];
+  for (let k = 0; k < n; k++) {
+    const p = Q[k], q = Q[(k + 1) % n], ex = q[0] - p[0], ey = q[1] - p[1], den = dx * ey - dy * ex;
+    if (Math.abs(den) < 1e-9) continue;
+    const t = ((p[0] - A[0]) * ey - (p[1] - A[1]) * ex) / den, u = ((p[0] - A[0]) * dy - (p[1] - A[1]) * dx) / den;
+    if (t > 1e-6 && t < 1 - 1e-6 && u >= 0 && u <= 1) hits.push({ t, k, pt: [A[0] + dx * t, A[1] + dy * t] });
+  }
+  if (hits.length < 2) return null;
+  hits.sort((a, b) => a.t - b.t);
+  const f = hits[0], l = hits[hits.length - 1];
+  if (f.k === l.k) return null;
+  const walk = dir => {
+    const out = []; let i = dir > 0 ? (f.k + 1) % n : f.k;
+    const stop = dir > 0 ? l.k : (l.k + 1) % n;
+    for (let g = 0; g < n + 1; g++) { out.push(Q[i]); if (i === stop) break; i = (i + dir + n) % n; }
+    return out;
+  };
+  const len = path => { let d = 0, prev = f.pt; path.forEach(p => { d += Math.hypot(p[0] - prev[0], p[1] - prev[1]); prev = p; }); return d + Math.hypot(l.pt[0] - prev[0], l.pt[1] - prev[1]); };
+  const a = walk(1), b = walk(-1);
+  return len(a) <= len(b) ? a : b;
+}
+const hzH = p => p.h != null ? p.h : wpAlt(p.w);
+function hzPoint(a, b, A, B, q, pr, h) {
+  const dx = B[0] - A[0], dy = B[1] - A[1], L2 = dx * dx + dy * dy || 1;
+  const f = Math.max(0, Math.min(1, ((q[0] - A[0]) * dx + (q[1] - A[1]) * dy) / L2));
+  return { w: newWp(pr.ll(q), { speed: wpSpeed(a.w), heading: 'route' }), gimbal: a.gimbal, orig: -1, extra: true, photo: false,
+    h: h != null ? h : hzH(a) + (hzH(b) - hzH(a)) * f, seg: a.seg, stop: false, straight: false, hz: true };
+}
+/* Applies the hazard rules to the finished list of flight points and reports what it did and what is still wrong. */
+function hzApply(P) {
+  const list = hzShapes();
+  if (!list.length || P.length < 2) return P;
+  const info = { detours: 0, climbs: [], problems: [], flat: false, loading: false, high: 0 };
+  const pts = P.map(p => [p.w.lat, p.w.lng]);
+  const pr = projector(centroid(pts));
+  const zones = hzZones(pr, 3);
+  // Ground heights: the mission's terrain data if terrain following is on; otherwise USGS elevation if it's available.
+  let e0 = 0, ground = () => 0;
+  if (P.terrainState === 'ok' && P.terrainInfo) { e0 = P.terrainInfo.e0; ground = (lat, lng) => elevAt(lat, lng); }
+  else {
+    const tk = (S.terrain && S.terrain.takeoff) || S.home || pts[0];
+    const all = pts.concat([tk], ...list.map(s => s.pts));
+    const st = demEnsure(Math.min(...all.map(p => p[0])), Math.min(...all.map(p => p[1])), Math.max(...all.map(p => p[0])), Math.max(...all.map(p => p[1])));
+    if (st === 'ok') { e0 = elevAt(tk[0], tk[1]); ground = (lat, lng) => elevAt(lat, lng); }
+    else { info.flat = true; info.loading = st === 'loading'; }
+  }
+  const margin = Math.max(0, S.hzMargin != null ? S.hzMargin : 10);
+  let out = P.slice();
+  // 1. Detour around no-fly zones.
+  if (S.hzAvoid !== false) {
+    const nf = zones.filter(z => z.kind === 'nofly');
+    for (let pass = 0; pass < 4 && nf.length; pass++) {
+      let changed = false; const res = [out[0]];
+      for (let i = 1; i < out.length; i++) {
+        const a = res[res.length - 1], b = out[i], A = pr.xy([a.w.lat, a.w.lng]), B = pr.xy([b.w.lat, b.w.lng]);
+        for (const z of nf) {
+          if (!hzBoxHit(A, B, z.boxX) || hzInside(A, z.Q) || hzInside(B, z.Q)) continue;
+          const path = hzDetour(A, B, z.Qx);
+          if (path && path.length) { path.forEach(q => res.push(hzPoint(a, b, A, B, q, pr))); changed = true; info.detours++; break; }
+        }
+        res.push(b);
+      }
+      out = res; if (!changed) break;
+    }
+  }
+  // 2. Climb over fly-over hazards.
+  const ov = zones.filter(z => z.kind === 'over');
+  const reqAt = (q, ll) => { let r = -Infinity, who = null; for (const z of ov) { if (hzInside(q, z.Q)) { const v = ground(ll[0], ll[1]) + z.top + margin - e0; if (v > r) { r = v; who = z; } } } return [r, who]; };
+  if (S.hzClimb !== false && ov.length) {
+    for (let pass = 0; pass < 3; pass++) {
+      let changed = false; const res = [out[0]];
+      for (let i = 1; i < out.length; i++) {
+        const a = res[res.length - 1], b = out[i], A = pr.xy([a.w.lat, a.w.lng]), B = pr.xy([b.w.lat, b.w.lng]);
+        if (!ov.some(z => hzBoxHit(A, B, z.box))) { res.push(b); continue; }
+        const Lg = Math.hypot(B[0] - A[0], B[1] - A[1]), n = Math.max(2, Math.ceil(Lg / 4));
+        let k1 = -1, k2 = -1, need = -Infinity, who = null;
+        for (let k = 0; k <= n; k++) {
+          const f = k / n, q = [A[0] + (B[0] - A[0]) * f, A[1] + (B[1] - A[1]) * f], [r, z] = reqAt(q, pr.ll(q));
+          const alt = hzH(a) + (hzH(b) - hzH(a)) * f;
+          if (r > alt + 0.3) { if (k1 < 0) k1 = k; k2 = k; if (r > need) { need = r; who = z; } }
+        }
+        if (k1 < 0) { res.push(b); continue; }
+        const altIn = hzH(a) + (hzH(b) - hzH(a)) * k1 / n, ramp = Math.max(5, need - altIn);
+        const dIn = k1 / n * Lg - ramp, dOut = k2 / n * Lg + ramp;
+        const at = d => [A[0] + (B[0] - A[0]) * d / Lg, A[1] + (B[1] - A[1]) * d / Lg];
+        if (dIn <= 1) a.h = Math.max(hzH(a), need); else res.push(hzPoint(a, b, A, B, at(dIn), pr, need));
+        if (dOut >= Lg - 1) b.h = Math.max(hzH(b), need); else res.push(hzPoint(a, b, A, B, at(dOut), pr, need));
+        const nm = hzName(who.s), prev = info.climbs.find(c => c.name === nm);
+        if (prev) prev.to = Math.max(prev.to, need); else info.climbs.push({ name: nm, to: need });
+        info.high = Math.max(info.high, need);
+        changed = true; res.push(b);
+      }
+      out = res; if (!changed) break;
+    }
+  }
+  // 3. Report whatever is still wrong (one entry per hazard).
+  const seen = {};
+  const report = (z, kind, ll, extra) => { const key = z.s.id + kind; if (seen[key]) return; seen[key] = 1; info.problems.push(Object.assign({ name: hzName(z.s), kind, at: ll }, extra || {})); };
+  for (let i = 0; i < out.length; i++) {
+    const a = out[i], A = pr.xy([a.w.lat, a.w.lng]);
+    zones.forEach(z => { if (z.kind === 'nofly' && hzInside(A, z.Q)) report(z, 'inside', [a.w.lat, a.w.lng]); });
+    if (i === out.length - 1) break;
+    const b = out[i + 1], B = pr.xy([b.w.lat, b.w.lng]);
+    if (!zones.some(z => hzBoxHit(A, B, z.box))) continue;
+    const Lg = Math.hypot(B[0] - A[0], B[1] - A[1]), n = Math.max(2, Math.ceil(Lg / 4));
+    for (let k = 0; k <= n; k++) {
+      const f = k / n, q = [A[0] + (B[0] - A[0]) * f, A[1] + (B[1] - A[1]) * f], ll = pr.ll(q), alt = hzH(a) + (hzH(b) - hzH(a)) * f;
+      zones.forEach(z => {
+        if (!hzInside(q, z.Q)) return;
+        if (z.kind === 'nofly') report(z, 'nofly', ll);
+        else { const r = ground(ll[0], ll[1]) + z.top + margin - e0; if (r > alt + 0.5) report(z, 'low', ll, { alt, need: r }); }
+      });
+    }
+  }
+  for (const k of ['terrainState', 'terrainInfo']) if (P[k] !== undefined) out[k] = P[k];
+  out.hazard = info;
+  return out;
+}
+function hzWarns(mp, warns) {
+  const hz = mp && mp.hazard; if (!hz) return;
+  hz.problems.forEach(p => warns.push(['bad', p.kind === 'low' ? `Route passes too low over ${esc(p.name)} (${fmtLen(p.alt)} vs. ${fmtLen(p.need)} needed). Turn on Climb over hazards or raise the altitude.`
+    : p.kind === 'inside' ? `A waypoint is inside no-fly zone ${esc(p.name)}. Move it out.` : `Route enters no-fly zone ${esc(p.name)}. Turn on Route around no-fly zones or change the route.`]));
+  if (hz.high > MAX_ALT + 0.5) warns.push(['bad', `Climbing over hazards takes the drone to ${fmtLen(hz.high)} above takeoff, over 400 ft.`]);
+  if (hz.flat && !hz.loading) warns.push(['', 'Hazard heights assume flat ground (no elevation data here). Allow extra clearance.']);
+}
+function hzSummary(mp) {
+  const hz = mp && mp.hazard; if (!hz) return '';
+  const parts = [];
+  hz.climbs.forEach(c => parts.push(`Climbs to ${fmtLen(c.to)} over ${esc(c.name)}`));
+  if (hz.detours) parts.push(`${hz.detours} detour${hz.detours === 1 ? '' : 's'} around no-fly zones`);
+  if (gridInfo && gridInfo.holes) parts.push(`Survey skips ${gridInfo.holes} no-fly zone${gridInfo.holes === 1 ? '' : 's'} (no photos there)`);
+  return parts.join(' · ');
+}
+/* After a hazard changes: rebuild surveys (they skip no-fly zones) and recheck the route. */
+function hzChanged() {
+  if (multi()) { segStore(); S.segs.forEach((sg, i) => { if (i !== S.seg && sg.mode === 'grid' && sg.shape) sg.wps = withSeg(sg, () => { regen(); return clone(S.wps); }); }); }
+  if (S.mode === 'grid') regen();
+  commit(false);
+}
+
 /* ---------- sync ----------
    Keeps markers, boundaries and saved missions the same on the tablet and the PC through one shared JSON file, normally
    in Google Drive. Every record carries the time it last changed (_t); deletions leave a dated tombstone. A sync reads
@@ -3071,7 +3337,7 @@ function syApply(merged) {
       const s = snap[kind] = {}; next.forEach(r => { s[r.id] = syHash(r); });
       sySet('planner.sync.snap', snap);
       if (kind === 'markers') { markers = next; try { localStorage.setItem('planner.markers', JSON.stringify(markers)); } catch (e) {} renderMarkers(); }
-      else if (kind === 'shapes') { shapes = next; try { localStorage.setItem('planner.shapes', JSON.stringify(shapes)); } catch (e) {} renderShapes(); }
+      else if (kind === 'shapes') { shapes = next; try { localStorage.setItem('planner.shapes', JSON.stringify(shapes)); } catch (e) {} renderShapes(); const sig = hzSignature(); if (sig !== hzSig) { hzSig = sig; hzChanged(); } }
       else { try { localStorage.setItem(LIB_KEY, JSON.stringify(next)); } catch (e) {} if (!sheet.hidden && sheetMode === 'lib') renderLib(); }
     }
   });
@@ -3182,6 +3448,7 @@ if (native && native.listOfflineAreas) native.listOfflineAreas();
 if (native && native.listMaps) native.listMaps();
 if (baseLayer === 'usgs') probeUsgs();
 syBoot();
+hzSig = hzSignature();
 (function () { // splash: fade out once the planner has drawn
   const sp = document.getElementById('splash'); if (!sp || window.__noSplash) { if (sp) sp.remove(); showNotice(); return; }
   setTimeout(() => { sp.classList.add('hide'); setTimeout(() => { sp.remove(); showNotice(); }, 450); }, 900);

@@ -1,4 +1,4 @@
-FlyPlan: Mapping & Waypoints for Windows  (version 1.34)
+FlyPlan: Mapping & Waypoints for Windows  (version 1.35)
 
 Plans DJI waypoint and mapping missions and sends them to the controller over USB.
 Not made by or affiliated with DJI. No warranty: check every route in DJI Fly and fly at your own risk.

@@ -25,6 +25,7 @@ Get the latest version from **[Releases](../../releases)**:
 - **Combined missions**: orbit, then survey, then waypoints, all in one mission.
 - **Battery-sized parts** (30 minutes by default): parts break between survey lines, never mid-orbit, and stay under DJI's waypoint limit.
 - **Terrain following** from USGS elevation data.
+- **Flight hazards**: mark power lines, towers and trees as fly-over hazards (with a height and keep-away distance) or areas as no-fly zones. Routes climb over hazards and detour around no-fly zones automatically, surveys skip no-fly zones, and anything left over blocks sending until you confirm.
 - **Send to controller over USB**: replaces a placeholder mission you saved in DJI Fly, after backing it up.
 - **Your own maps**: import an orthomosaic as MBTiles (from WebODM, QGIS and others) as a basemap.
 - **Offline maps** (Android): USGS aerial imagery and terrain for areas with no signal.
