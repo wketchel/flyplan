@@ -22,6 +22,7 @@
     deleteMap: function (id) { post('deleteMap', [id]); },
     findController: function () { post('findController'); },
     sendMission: function (folder, name, template, waylines, preview) { post('sendMission', [folder, name, template, waylines, preview || '']); },
+    openUrl: function (u) { post('openUrl', [u]); },
     requestFolderAccess: function () {},
   };
 })();

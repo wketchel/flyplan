@@ -235,6 +235,13 @@ mod app {
                     Err(e) => c.emit(json!({ "type": "syncError", "code": "io", "message": format!("Couldn't save the sync file: {e}") })),
                 }
             }
+            "openUrl" => {
+                let u = arg(a, 0);
+                if u.starts_with("https://") || u.starts_with("http://") {
+                    use std::os::windows::process::CommandExt;
+                    let _ = std::process::Command::new("rundll32").args(["url.dll,FileProtocolHandler", &u]).creation_flags(0x0800_0000).spawn();
+                }
+            }
             "syncForget" => { let mut s = c.settings.lock().unwrap(); s.v["syncPath"] = json!(""); s.save(); }
             "importMbtiles" => {
                 let Some(p) = c.dialog().set_title("Add a map").add_filter("MBTiles map", &["mbtiles"]).pick_file() else { return };

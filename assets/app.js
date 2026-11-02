@@ -474,7 +474,7 @@ function stats() {
     }
   }
   if (S.mode === 'grid' && S.split && S.split.on && S.split.sel < 0 && gridInfo && gridInfo.parts.length > 1) out.warns.push(['bad', 'Showing all parts. Pick one part under Split into parts before sending.']);
-  hzWarns(missionPoints(), out.warns);
+  hzWarns(missionPoints(), out.warns); airWarns(out.warns);
   if (out.points > 200) out.warns.push(['bad', out.points + ' waypoints' + (out.points > W.length ? ' including photo points' : '') + '. DJI Fly may reject missions over ~200 points — raise the interval, fly higher or split the area.']);
   if (out.time > 30 * 60) out.warns.push(['', 'Longer than ~30 min. Plan a battery swap or split the area.']);
   if (Math.max(S.speed, ...W.map(wpSpeed)) > 15) out.warns.push(['', 'Speeds above 15 m/s (34 mph) may be capped by DJI Fly.']);
@@ -516,7 +516,7 @@ function statsMulti() {
       if (mp.terrainInfo.clamped) out.warns.push(['bad', 'Ground drops more than your flying height below takeoff in places. Those points were held at takeoff level.']);
     }
   }
-  hzWarns(mp, out.warns);
+  hzWarns(mp, out.warns); airWarns(out.warns);
   if (out.points > 200 && !(parts.length > 1 && S.split.sel < 0)) out.warns.push(['bad', out.points + ' points' + (pt ? ' in this part' : ' in total') + '. DJI Fly may reject missions over ~200 points. Turn on Split into parts' + (pt ? ' with a lower time limit' : '') + ', or trim a segment.']);
   if (out.time > 30 * 60 && !(parts.length > 1 && S.split.sel < 0)) out.warns.push(['', 'Longer than ~30 min. Turn on Split into parts or plan a battery swap.']);
   return out;
@@ -901,6 +901,7 @@ function renderTemp() {
 
 function renderMap() {
   shapeLayer.clearLayers(); routeLayer.clearLayers();
+  airDraw(shapeLayer);
   const sh = S.shape;
   if (sh && sh.type === 'polygon') {
     const poly = L.polygon(sh.pts, { color: '#4dabf7', weight: 2, fillOpacity: 0.12, interactive: false }).addTo(shapeLayer);
@@ -1123,6 +1124,7 @@ function renderPanel() {
       ${np ? `<div class="warn bad">⚠ ${np} hazard problem${np === 1 ? '' : 's'}. See the warnings below.</div>` : ''}
       <p class="note">Mark hazards by editing a boundary or line in Features. Wires are hard for the drone's sensors to see, so plan the clearance here rather than relying on obstacle avoidance.</p></section>`;
   }
+  h += airPanel();
 
   // Survey grid
   if (S.mode === 'grid') {
@@ -1327,6 +1329,7 @@ panel.addEventListener('click', e => {
   const a = e.target.closest('[data-act]'); if (!a || a.disabled) return;
   const act = a.dataset.act, si = Number(a.dataset.i);
   if (act !== 'segdel') segArmed = -1;
+  if (airAct(act, a)) return;
   if (act === 'segadd') { segAdd(); return; }
   if (act === 'segsel') { if (si !== S.seg) segActivate(si); else fitMission(); return; }
   if (act === 'segup' || act === 'segdown') { segMove(si, act === 'segup' ? -1 : 1); return; }
@@ -1353,7 +1356,7 @@ function commit(fit) {
   if (S.interval.auto) S.interval.value = cov.interval;
   segStore();
   if (multi() && S.split.on) { const n = missionParts().length; if (S.split.sel >= n) S.split.sel = -1; }
-  save(); renderMap(); renderPanel(); renderTools(); }
+  save(); renderMap(); renderPanel(); renderTools(); airSchedule(); }
 
 /* ---------- toast ---------- */
 let toastT = null;
@@ -1454,7 +1457,7 @@ let send = { step: 'intro', missions: [], pick: null, status: '', cls: '' };
 function openSend(after) {
   sheetMode = 'send'; send = { step: 'intro', missions: [], pick: null, status: '', cls: '', after: after || 'send' };
   const hz = missionPoints().hazard;
-  if (hz && hz.problems.length) send.step = 'hazard';
+  if ((hz && hz.problems.length) || airBlocking().length) send.step = 'hazard';
   else if (after === 'save') { doSaveKmz(); return; }
   renderSheet(); sheet.hidden = false;
 }
@@ -1462,10 +1465,14 @@ function renderSheet() {
   let h = '<div class="card">';
   const onCtl = !!(native && native.isOnController && native.isOnController());
   if (send.step === 'hazard') {
-    const hz = missionPoints().hazard;
-    h += `<h2>Hazards on this route</h2><div class="mlist">${hz.problems.map((p, i) => `<div class="mitem"><div style="flex:1"><b>${esc(p.name)}</b><small>${p.kind === 'low' ? 'Passes ' + fmtLen(p.alt) + ' above takeoff; needs ' + fmtLen(p.need) : p.kind === 'inside' ? 'A waypoint is inside this no-fly zone' : 'Route enters this no-fly zone'}</small></div><button class="btn small" data-s="hzgo" data-i="${i}">Show</button></div>`).join('')}</div>
-      <p class="note">Fix these first: turn on <b>Climb over</b> and <b>Route around</b> under Hazards, move the waypoints, or change the hazard. Sending anyway is at your own risk.</p>
-      <div class="btns"><button class="btn" data-s="close">Fix the route</button><button class="btn danger" data-s="hzok">${send.after === 'save' ? 'Save anyway' : 'Send anyway'}</button></div>`;
+    const hz = missionPoints().hazard, probs = hz ? hz.problems : [], ab = airBlocking();
+    if (probs.length) h += `<h2>Hazards on this route</h2><div class="mlist">${probs.map((p, i) => `<div class="mitem"><div style="flex:1"><b>${esc(p.name)}</b><small>${p.kind === 'low' ? 'Passes ' + fmtLen(p.alt) + ' above takeoff; needs ' + fmtLen(p.need) : p.kind === 'inside' ? 'A waypoint is inside this no-fly zone' : 'Route enters this no-fly zone'}</small></div><button class="btn small" data-s="hzgo" data-i="${i}">Show</button></div>`).join('')}</div>
+      <p class="note">Fix these first: turn on <b>Climb over</b> and <b>Route around</b> under Hazards, move the waypoints, or change the hazard. Sending anyway is at your own risk.</p>`;
+    if (ab.length) h += `<h2>${probs.length ? 'Airspace' : 'Check your airspace authorization'}</h2><div class="mlist">${ab.map((it, i) => `<div class="mitem"><div style="flex:1"><b>${esc(it.title)}</b><small style="font-family:var(--font)">${it.detail}</small></div><button class="btn small" data-s="airgo" data-i="${i}">Show</button></div>`).join('')}</div>
+      <p class="note">Have your LAANC or DroneZone approval before you fly. This app can't request it for you.</p>
+      <div class="btns" style="margin-bottom:8px"><button class="btn small" data-s="airreq">Request authorization</button><button class="btn small" data-s="airtfr">Check TFRs</button></div>`;
+    const ok = send.after === 'save' ? 'Save anyway' : 'Send anyway', okAir = probs.length ? ok : send.after === 'save' ? 'Save' : 'Continue';
+    h += `<div class="btns"><button class="btn" data-s="close">${probs.length ? 'Fix the route' : 'Cancel'}</button><button class="btn ${probs.length ? 'danger' : 'primary'}" data-s="hzok">${ab.length && !probs.length ? 'I have authorization · ' + okAir : ok}</button></div>`;
     sheet.innerHTML = h + '</div>'; return;
   }
   if (send.step === 'access') {
@@ -1527,7 +1534,10 @@ sheet.addEventListener('click', e => {
   const b = e.target.closest('[data-s]'); if (!b || b.disabled) return;
   if (b.dataset.s === 'close') sheet.hidden = true;
   else if (b.dataset.s === 'hzgo') { const p = missionPoints().hazard.problems[+b.dataset.i]; if (p) { sheet.hidden = true; map.setView(p.at, Math.max(map.getZoom(), 17)); } }
-  else if (b.dataset.s === 'hzok') { if (send.after === 'save') { sheet.hidden = true; doSaveKmz(); } else { send.step = 'intro'; renderSheet(); } }
+  else if (b.dataset.s === 'airgo') { const it = airBlocking()[+b.dataset.i]; if (it) { sheet.hidden = true; map.setView(it.at, Math.max(map.getZoom(), 14)); } }
+  else if (b.dataset.s === 'airreq') openUrl(AIR_LINKS.aloft);
+  else if (b.dataset.s === 'airtfr') openUrl(AIR_LINKS.tfr);
+  else if (b.dataset.s === 'hzok') { airAck = air.key; if (send.after === 'save') { sheet.hidden = true; doSaveKmz(); } else { send.step = 'intro'; renderSheet(); } }
   else if (b.dataset.s === 'grant') native.requestFolderAccess();
   else if (b.dataset.s === 'find') {
     if (!native || !native.findController) { send.status = PC ? 'Sending to the controller works from the tablet app. Save the mission in Missions; sync brings it to the tablet, then send it from there. Or use Save KMZ and copy the file yourself.' : 'Sending to the controller works in the Android app.'; send.cls = 'bad'; return renderSheet(); }
@@ -3180,6 +3190,248 @@ function hzChanged() {
   if (multi()) { segStore(); S.segs.forEach((sg, i) => { if (i !== S.seg && sg.mode === 'grid' && sg.shape) sg.wps = withSeg(sg, () => { regen(); return clone(S.wps); }); }); }
   if (S.mode === 'grid') regen();
   commit(false);
+}
+
+/* ---------- FAA airspace ----------
+   Checks the mission against the FAA's public UAS data (facility maps, airspace classes, special use,
+   national security areas, stadiums). Advisory only: the pilot still checks TFRs/NOTAMs and gets
+   authorization through a LAANC provider or FAA DroneZone. */
+const AIR_BASE = 'https://services6.arcgis.com/ssFJjBXIUyZDrSYZ/arcgis/rest/services/';
+const AIR_LAYERS = {
+  grid: ['FAA_UAS_FacilityMap_Data', 'CEILING,APT1_NAME,APT1_ICAO,APT1_FAAID,AIRSPACE_1', '1=1'],
+  cls: ['Class_Airspace', 'NAME,CLASS,LOCAL_TYPE,LOWER_VAL,LOWER_CODE', "CLASS IN ('B','C','D','E') AND LOWER_VAL = 0"],
+  sua: ['Special_Use_Airspace', 'NAME,TYPE_CODE,LOWER_VAL,LOWER_CODE,TIMESOFUSE', "TYPE_CODE IN ('P','R','MOA','W','A')"],
+  pro: ['Prohibited_Areas', 'NAME,TYPE_CODE,LOWER_VAL,LOWER_CODE,TIMESOFUSE', '1=1'],
+  nsr: ['Part_Time_National_Security_UAS_Flight_Restrictions', 'Facility,Base,Reason,Floor,Ceiling,ALERTYPE', '1=1'],
+  nda: ['National_Defense_Airspace_TFR_Areas', 'NAME,WKHR_RMK', '1=1'],
+  std: ['Stadiums', 'NAME,CITY,STATE', '1=1'],
+};
+const AIR_LINKS = {
+  aloft: 'https://www.aloft.ai/air-control/',
+  b4u: 'https://b4ufly.aloft.ai/',
+  tfr: 'https://tfr.faa.gov/',
+  dz: 'https://faadronezone-access.faa.gov/',
+  laanc: 'https://www.faa.gov/uas/getting_started/laanc',
+};
+const STADIUM_R = 5556;                     // 3 nautical miles
+var air = { key: '', state: 'idle', data: null, at: 0, cached: false }, airTimer = null, airEval = null, airAck = '';
+function openUrl(u) {
+  if (native && native.openUrl) native.openUrl(u);
+  else window.open(u, '_blank', 'noopener');
+}
+function airPoints() {
+  if (!air) return null;
+  const P = missionPoints();
+  return P.length >= 2 ? P : null;
+}
+/* Area to fetch: the route plus a little, snapped to a 0.01° grid so small edits reuse the result. */
+function airBox(P) {
+  let a = 90, b = 180, c = -90, d = -180;
+  P.forEach(p => { a = Math.min(a, p.w.lat); b = Math.min(b, p.w.lng); c = Math.max(c, p.w.lat); d = Math.max(d, p.w.lng); });
+  const s = 100, f = v => Math.floor(v * s - 0.3) / s, g = v => Math.ceil(v * s + 0.3) / s;
+  return [f(a), f(b), g(c), g(d)];
+}
+function airUrl(k, box, pad) {
+  const [name, fields, where] = AIR_LAYERS[k];
+  const env = [box[1] - pad, box[0] - pad, box[3] + pad, box[2] + pad].map(v => v.toFixed(4)).join(',');
+  return AIR_BASE + name + '/FeatureServer/0/query?where=' + encodeURIComponent(where) + '&geometry=' + env +
+    '&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=' + fields +
+    '&returnGeometry=true&outSR=4326&resultRecordCount=2000&f=geojson';
+}
+/* GeoJSON polygon → list of polygons, each a list of [lat,lng] rings, with a bounding box. */
+function airPolys(geom) {
+  if (!geom) return [];
+  const list = geom.type === 'Polygon' ? [geom.coordinates] : geom.type === 'MultiPolygon' ? geom.coordinates : [];
+  return list.map(rings => {
+    const R = rings.map(r => r.map(c => [c[1], c[0]]));
+    return { R, box: hzBox(R[0] || []) };
+  });
+}
+function airIn(ll, polys) {
+  for (const p of polys) {
+    if (ll[0] < p.box[0] || ll[0] > p.box[2] || ll[1] < p.box[1] || ll[1] > p.box[3]) continue;
+    let n = 0; p.R.forEach(r => { if (hzInside(ll, r)) n++; });
+    if (n % 2) return true;
+  }
+  return false;
+}
+function airPrep(raw) {
+  const out = {};
+  for (const k in raw) out[k] = (raw[k] || []).map(f => ({ a: f.properties || {}, polys: airPolys(f.geometry), pt: f.geometry && f.geometry.type === 'Point' ? [f.geometry.coordinates[1], f.geometry.coordinates[0]] : null }));
+  return out;
+}
+function airLoadStore() { try { return JSON.parse(localStorage.getItem('planner.air')) || null; } catch (e) { return null; } }
+function airSchedule() {
+  clearTimeout(airTimer);
+  airTimer = setTimeout(() => airRun(false), 1200);
+}
+function airRun(force) {
+  const P = airPoints(); if (!P) return;
+  const box = airBox(P), key = box.join(',');
+  if (!force && air.key === key && (air.state === 'ok' || air.state === 'loading')) return;
+  if (!force && air.key !== key) {
+    const st = airLoadStore();
+    if (st && st.key === key && st.raw) { air = { key, state: 'ok', data: airPrep(st.raw), at: st.at, cached: true }; airEval = null; airRedraw(); if (Date.now() - st.at < 12 * 3600e3) return; }
+  }
+  const tok = {}; air.tok = tok;
+  if (air.key !== key || air.state !== 'ok') { air = { key, state: 'loading', data: null, at: 0, tok }; airEval = null; airRedraw(); }
+  const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = setTimeout(() => ctl && ctl.abort(), 20000);
+  const get = (k, pad) => fetch(airUrl(k, box, pad), ctl ? { signal: ctl.signal } : undefined).then(r => r.json()).then(j => {
+    if (j.error) throw new Error(j.error.message || 'FAA data error');
+    return j.features || [];
+  });
+  const keys = Object.keys(AIR_LAYERS);
+  Promise.all(keys.map(k => get(k, k === 'std' ? 0.06 : 0))).then(res => {
+    clearTimeout(timer);
+    if (air.tok !== tok) return;
+    const raw = {}; keys.forEach((k, i) => { raw[k] = res[i]; });
+    air = { key, state: 'ok', data: airPrep(raw), at: Date.now(), cached: false };
+    try { localStorage.setItem('planner.air', JSON.stringify({ key, at: air.at, raw })); } catch (e) { try { localStorage.removeItem('planner.air'); } catch (e2) {} }
+    airEval = null; airRedraw();
+  }).catch(() => {
+    clearTimeout(timer);
+    if (air.tok !== tok) return;
+    if (air.state === 'ok') { air.stale = true; airRedraw(); return; }   // keep the older result we already have
+    air = { key, state: 'error', data: null, at: 0 }; airEval = null; airRedraw();
+  });
+}
+function airRedraw() { if (typeof renderPanel === 'function') { renderMap(); renderPanel(); } }
+const AIR_RANK = { ok: 0, caution: 1, auth: 2, bad: 3 };
+/* Check the route against the fetched data. */
+function airCheck() {
+  const P = airPoints();
+  if (!P || air.state !== 'ok' || !air.data) return null;
+  if (airEval && airEval.mp === P && airEval.data === air.data) return airEval.res;
+  const D = air.data, mp = P;
+  // Sample the route every ~100 m with an estimated height above ground.
+  const e0 = mp.terrainInfo ? mp.terrainInfo.e0 : null;
+  const agl = (p, ll) => { const h = hzH(p); if (e0 != null) { const g = elevAt(ll[0], ll[1]); if (g != null) return h + e0 - g; } return h; };
+  const S2 = [];
+  for (let i = 0; i < mp.length; i++) {
+    const a = mp[i], A = [a.w.lat, a.w.lng];
+    S2.push({ ll: A, h: agl(a, A) });
+    if (i === mp.length - 1) break;
+    const b = mp[i + 1], B = [b.w.lat, b.w.lng], n = Math.ceil(hav(A, B) / 100);
+    for (let k = 1; k < n; k++) { const f = k / n, ll = [A[0] + (B[0] - A[0]) * f, A[1] + (B[1] - A[1]) * f]; S2.push({ ll, h: hzH(a) + (hzH(b) - hzH(a)) * f + (e0 != null && elevAt(ll[0], ll[1]) != null ? e0 - elevAt(ll[0], ll[1]) : 0) }); }
+  }
+  const maxFt = Math.max(...S2.map(s => s.h)) * FT;
+  const items = [], shapes = [];
+  const hit = f => { for (const s of S2) if (airIn(s.ll, f.polys)) return s; return null; };
+  // Controlled airspace and facility-map ceilings.
+  const cells = []; let cmin = Infinity, cmax = -Infinity, apt = '';
+  D.grid.forEach(f => { const s = hit(f); if (!s) return; const c = Number(f.a.CEILING); cells.push({ f, c, s }); cmin = Math.min(cmin, c); cmax = Math.max(cmax, c); if (!apt) apt = f.a.APT1_NAME || f.a.APT1_ICAO || ''; });
+  const areas = [];
+  D.cls.forEach(f => { const s = hit(f); if (s && !areas.some(x => x.a.NAME === f.a.NAME)) { areas.push({ a: f.a, s }); shapes.push({ f, level: 'auth' }); } });
+  if (areas.length || cells.length) {
+    const names = areas.map(x => x.a.NAME).join(', ') || ('Class ' + (cells[0].f.a.AIRSPACE_1 || '') + ' airspace near ' + apt);
+    const ceil = cells.length ? (cmin === cmax ? fmtLen(cmin / FT) : fmtLen(cmin / FT) + '–' + fmtLen(cmax / FT)) : '';
+    let detail;
+    if (!cells.length) detail = 'No LAANC grid covers this spot. Request authorization through FAA DroneZone.';
+    else if (cmin <= 0) detail = `LAANC ceiling here is 0 ft${cmax > 0 ? ' in places (up to ' + fmtLen(cmax / FT) + ')' : ''}. Automatic approval isn't available; request further coordination through a LAANC app or FAA DroneZone (can take weeks).`;
+    else if (maxFt > cmin + 1) detail = `LAANC ceiling here is ${ceil}; the mission reaches about ${fmtLen(maxFt / FT)} above the ground. Fly at ${fmtLen(cmin / FT)} or lower for instant approval, or request further coordination.`;
+    else detail = `LAANC ceiling here is ${ceil}. The mission (about ${fmtLen(maxFt / FT)} above ground) fits, so a LAANC app can usually approve it in seconds.`;
+    items.push({ level: 'auth', kind: 'ctl', title: 'Controlled airspace: ' + names, detail, at: (areas[0] || cells[0]).s.ll });
+  }
+  // Special use airspace and prohibited areas.
+  const seen = {};
+  D.sua.concat(D.pro).forEach(f => {
+    const a = f.a, t = String(a.TYPE_CODE || ''), nm = a.NAME || t; if (seen[nm]) return;
+    const s = hit(f); if (!s) return; seen[nm] = 1;
+    const lo = Number(a.LOWER_VAL) || 0, msl = a.LOWER_CODE === 'MSL';
+    let gFt = null; if (msl) { const g = elevAt(s.ll[0], s.ll[1]); if (g != null) gFt = g * FT; }
+    const floorAgl = msl ? (gFt != null ? lo - gFt : null) : lo;
+    const reaches = floorAgl == null ? lo < 3000 : floorAgl <= maxFt + 100;
+    const when = a.TIMESOFUSE ? ' Active: ' + String(a.TIMESOFUSE).toLowerCase() + '.' : '';
+    if (t === 'P') { items.push({ level: 'bad', kind: 'sua', title: 'Prohibited area ' + nm, detail: 'Flight is not allowed here.', at: s.ll }); shapes.push({ f, level: 'bad' }); }
+    else if (t === 'R') {
+      if (!reaches) return;
+      items.push({ level: 'bad', kind: 'sua', title: 'Restricted area ' + nm, detail: 'Don\'t fly while it\'s active without the controlling agency\'s permission.' + when, at: s.ll }); shapes.push({ f, level: 'bad' });
+    } else {
+      if (floorAgl == null ? lo > 3000 : floorAgl > 1500) return;
+      const kind = t === 'MOA' ? 'Military operations area' : t === 'W' ? 'Warning area' : 'Alert area';
+      items.push({ level: 'caution', kind: 'sua', title: kind + ': ' + nm, detail: 'No authorization needed, but watch for fast, low-flying aircraft.' + when, at: s.ll }); shapes.push({ f, level: 'caution' });
+    }
+  });
+  D.nsr.forEach(f => {
+    const s = hit(f); if (!s) return; const a = f.a, part = /intermittent/i.test(a.ALERTYPE || '');
+    items.push({ level: part ? 'caution' : 'bad', kind: 'nsr', title: 'National security flight restriction: ' + (a.Facility || a.Base || ''), detail: (part ? 'Part-time restriction, active by NOTAM. Check TFRs before flying.' : 'Drones are restricted here') + (a.Ceiling ? ' (surface to ' + a.Ceiling + ').' : '.'), at: s.ll });
+    shapes.push({ f, level: part ? 'caution' : 'bad' });
+  });
+  D.nda.forEach(f => {
+    const s = hit(f); if (!s) return;
+    items.push({ level: 'caution', kind: 'nda', title: f.a.NAME || 'National defense airspace', detail: 'Active by NOTAM. Check TFRs before flying.', at: s.ll });
+    shapes.push({ f, level: 'caution' });
+  });
+  D.std.forEach(f => {
+    if (!f.pt) return; let best = Infinity; S2.forEach(s => { best = Math.min(best, hav(s.ll, f.pt)); });
+    if (best > STADIUM_R) return;
+    items.push({ level: 'caution', kind: 'std', title: 'Within 3 NM of ' + (f.a.NAME || 'a stadium'), detail: 'No drones from 1 hour before to 1 hour after major events there (game-day TFR).', at: f.pt, std: f.pt });
+  });
+  const level = items.reduce((m, it) => AIR_RANK[it.level] > AIR_RANK[m] ? it.level : m, 'ok');
+  const res = { level, items, shapes, cells, maxFt };
+  airEval = { mp, data: air.data, res };
+  return res;
+}
+function airHeadline(r) {
+  if (!r) return '';
+  if (r.level === 'bad') return 'Restricted airspace on this route';
+  if (r.level === 'auth') return 'FAA authorization needed';
+  if (r.level === 'caution') return 'No authorization needed · cautions';
+  return 'Class G · no FAA authorization needed';
+}
+function airWarns(warns) {
+  const r = airCheck(); if (!r) return;
+  if (r.level === 'bad') warns.push(['bad', 'Route enters restricted or prohibited airspace. See Airspace.']);
+  else if (r.level === 'auth') warns.push(['bad', 'Controlled airspace: get FAA authorization (LAANC) before flying. See Airspace.']);
+}
+function airPanel() {
+  if (!airPoints()) return '';
+  const r = airCheck();
+  let h = `<section class="grp"><h3>Airspace</h3>`;
+  if (air.state === 'loading') h += '<p class="note">Checking FAA airspace…</p>';
+  else if (air.state === 'error') h += '<div class="warn">⚠ Couldn\'t reach the FAA airspace data. The check needs internet.</div>';
+  else if (r) {
+    h += `<div class="airbadge ${r.level}">${airHeadline(r)}</div>`;
+    if (r.items.length) h += '<div class="airitems">' + r.items.map((it, i) => `<div class="airitem ${it.level}"><div style="flex:1"><b>${esc(it.title)}</b><small>${it.detail}</small></div><button class="btn small" data-act="airgo" data-i="${i}">Show</button></div>`).join('') + '</div>';
+    else h += `<p class="note">Up to 400 ft above the ground, with no special use areas or stadiums nearby.</p>`;
+    const d = new Date(air.at);
+    h += `<p class="note">FAA data from ${d.toLocaleDateString([], { month: 'short', day: 'numeric' })}${air.stale || air.cached ? ' (saved copy)' : ''}. Always check temporary flight restrictions (TFRs) on the day you fly.</p>`;
+  }
+  if (r && (r.level === 'auth' || r.level === 'bad')) h += `<p class="note">This app can't file the request itself. A LAANC app such as Aloft approves most requests in seconds; FAA DroneZone handles the rest.</p>`;
+  h += '<div class="btns">';
+  if (r && r.level === 'auth') h += '<button class="btn small primary" data-act="airreq">Request authorization</button><button class="btn small" data-act="airdz">FAA DroneZone</button>';
+  h += '<button class="btn small" data-act="airtfr">Check TFRs</button><button class="btn small" data-act="airb4u">B4UFLY map</button>';
+  if (air.state !== 'loading') h += '<button class="btn small" data-act="aircheck">Check again</button>';
+  h += '</div>';
+  return h + '</section>';
+}
+/* Panel buttons. Returns true if handled. */
+function airAct(act, b) {
+  if (act === 'airreq') openUrl(AIR_LINKS.aloft);
+  else if (act === 'airdz') openUrl(AIR_LINKS.dz);
+  else if (act === 'airtfr') openUrl(AIR_LINKS.tfr);
+  else if (act === 'airb4u') openUrl(AIR_LINKS.b4u);
+  else if (act === 'airlaanc') openUrl(AIR_LINKS.laanc);
+  else if (act === 'aircheck') airRun(true);
+  else if (act === 'airgo') { const r = airCheck(), it = r && r.items[+b.dataset.i]; if (it) map.setView(it.at, Math.max(map.getZoom(), it.kind === 'std' ? 12 : 14)); }
+  else return false;
+  return true;
+}
+const AIR_COLOR = { bad: '#ff4d4f', auth: '#e64980', caution: '#fab005' };
+function airDraw(layer) {
+  const r = airCheck(); if (!r) return;
+  r.shapes.forEach(({ f, level }) => f.polys.forEach(p => L.polygon(p.R, { color: AIR_COLOR[level], weight: 2, dashArray: '8 6', fillOpacity: 0.05, interactive: false }).addTo(layer)));
+  r.cells.forEach(({ f, c }) => {
+    f.polys.forEach(p => L.polygon(p.R, { color: '#e64980', weight: 1, opacity: 0.7, fillOpacity: c <= 0 ? 0.18 : 0.06, interactive: false }).addTo(layer));
+    if (r.cells.length <= 80 && f.polys[0]) { const b = f.polys[0].box; L.marker([(b[0] + b[2]) / 2, (b[1] + b[3]) / 2], { interactive: false, icon: L.divIcon({ className: '', html: `<div class="airceil">${imp() ? c : Math.round(c / FT)}</div>`, iconSize: [34, 16], iconAnchor: [17, 8] }) }).addTo(layer); }
+  });
+  r.items.forEach(it => { if (it.std) L.circle(it.std, { radius: STADIUM_R, color: AIR_COLOR.caution, weight: 1.5, dashArray: '4 6', fillOpacity: 0.03, interactive: false }).addTo(layer); });
+}
+/* Items the send screen should stop for (authorization or restricted). */
+function airBlocking() {
+  const r = airCheck(); if (!r || AIR_RANK[r.level] < 2 || airAck === air.key) return [];
+  return r.items.filter(it => AIR_RANK[it.level] >= 2);
 }
 
 /* ---------- sync ----------

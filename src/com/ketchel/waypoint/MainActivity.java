@@ -342,6 +342,15 @@ public class MainActivity extends Activity {
         public void syncWrite(final String text) { new Thread(new Runnable() { public void run() { syncWriteNow(text); } }).start(); }
 
         @JavascriptInterface
+        public void openUrl(final String url) {
+            if (url == null || !(url.startsWith("https://") || url.startsWith("http://"))) return;
+            runOnUiThread(new Runnable() { @Override public void run() {
+                try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); }
+                catch (Exception e) { android.widget.Toast.makeText(MainActivity.this, "No browser found to open " + url, android.widget.Toast.LENGTH_LONG).show(); }
+            } });
+        }
+
+        @JavascriptInterface
         public void syncForget() {
             Uri u = syncUri();
             if (u != null) {
