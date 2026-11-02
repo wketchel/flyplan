@@ -13,7 +13,7 @@ straight to the controller over USB, from an **Android tablet** or a **Windows P
 
 ## Download
 Get the latest version from **[Releases](../../releases)**:
-- **FlyPlan.apk** for Android tablets and phones (Android 7 or newer). You may need to allow installing apps from your browser or file manager.
+- **FlyPlan.apk** for Android 7 or newer. **Optimized for tablets**: it runs on phones, but the map and settings panel are cramped on a small screen. You may need to allow installing apps from your browser or file manager.
 - **FlyPlan for Windows.zip**: unzip, keep `WebView2Loader.dll` next to `FlyPlan.exe`, and run `FlyPlan.exe`.
   Windows SmartScreen will warn the first time because the app isn't code-signed: choose *More info*, then *Run anyway*.
 
