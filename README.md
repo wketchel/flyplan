@@ -9,7 +9,7 @@ straight to the controller over USB, from an **Android tablet** or a **Windows P
 > Always check the route in DJI Fly before you fly, keep the drone in sight, and follow the rules where you fly.
 
 **Tested with:** DJI Air 3S + DJI RC 2 (DJI Fly). Other drones and controllers that fly DJI Fly waypoint missions
-(RC Pro 2, RC-N2/N3 with a phone, Mini 4 Pro, Air 3) may work but haven't been tested.
+(Mini 5 Pro, Mini 4 Pro, Air 3, RC Pro 2, RC-N2/N3 with a phone) may work but haven't been tested.
 
 ## Download
 Get the latest version from **[Releases](../../releases)**:
