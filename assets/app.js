@@ -2852,15 +2852,15 @@ function phRefreshSheet() {
 function phStrip(rec, kind) {
   const ids = rec.photos || [];
   return `<div class="phstrip">${ids.map(id => `<button class="phth" data-ph="${id}" data-pk="${kind}" data-pf="${rec.id}"><img data-thumb="${id}" alt=""></button>`).join('')}` +
-    `<button class="phadd" data-phadd="${kind}" data-pf="${rec.id}">${ICON_CAM}<span>Add photo</span></button></div>`;
+    `<button class="phadd" data-phadd="${kind}" data-pf="${rec.id}">${ICON_CAM}<span>Add photo</span>${DESKTOP || PC ? '<small class="phdrop">or drag in</small>' : ''}</button></div>`;
 }
 function phFillThumbs(root) {
   root.querySelectorAll('img[data-thumb]').forEach(img => phGet(img.dataset.thumb).then(r => {
     if (r) img.src = r.thumb; else img.parentNode.classList.add('missing');
   }).catch(() => {}));
 }
-async function phAddTo(kind, fid) {
-  const files = await phPick(); if (!files.length) return;
+async function phAddTo(kind, fid, given) {
+  const files = given || await phPick(); if (!files.length) return;
   toast(files.length > 1 ? 'Adding ' + files.length + ' photos…' : 'Adding photo…');
   let ok = 0, err = '';
   for (const f of files) {
@@ -2874,6 +2874,57 @@ async function phAddTo(kind, fid) {
   phRefreshSheet();
   toast(err ? (ok ? 'Added ' + ok + '. ' : '') + 'Problem: ' + err : 'Added ' + ok + ' photo' + (ok === 1 ? '' : 's'));
 }
+/* ----- drag and drop (PC): photo files, or a picture dragged from a browser such as Google Photos ----- */
+function phDropTarget() {
+  if (sheet.hidden) return null;
+  const b = sheet.querySelector('[data-phadd]'); if (!b) return null;
+  const rec = phFeature(b.dataset.phadd, b.dataset.pf);
+  return rec ? { kind: b.dataset.phadd, fid: b.dataset.pf, name: rec.name || (b.dataset.phadd === 's' ? shType(rec).label : 'this marker') } : null;
+}
+function phDropUrl(dt) {
+  let url = '';
+  const html = dt.getData('text/html') || '', m = html.match(/<img[^>]+src=["']([^"']+)["']/i);
+  if (m) url = m[1].replace(/&amp;/g, '&');
+  if (!url) url = (dt.getData('text/uri-list') || '').split(/\r?\n/).find(l => l && l[0] !== '#') || '';
+  if (!url) url = (dt.getData('text/plain') || '').trim();
+  if (!/^https?:\/\/\S+$/.test(url)) return '';
+  // Google Photos: ask for the full-size original instead of the screen-sized copy.
+  if (/googleusercontent\.com\//.test(url)) url = /=[\w-]+(\?.*)?$/.test(url) ? url.replace(/=[\w-]+(\?.*)?$/, '=d$1') : url + '=d';
+  return url;
+}
+async function phFromDrop(dt) {
+  const files = Array.from(dt.files || []).filter(f => /^image\//.test(f.type) || /\.(jpe?g|png|heic|heif|webp|gif)$/i.test(f.name));
+  if (files.length) return files;
+  if (Array.from(dt.files || []).length) throw new Error('only photos can be dropped here');
+  const url = phDropUrl(dt);
+  if (!url) throw new Error('nothing usable was dropped. Drag the photo itself, or save it first and drop the file');
+  let r;
+  try { r = await fetch(url, { credentials: 'omit' }); } catch (e) { throw new Error('couldn’t download that picture. Save it first, then drop the file'); }
+  if (!r.ok) throw new Error('the site refused the download (' + r.status + '). Save the photo first, then drop the file');
+  const blob = await r.blob();
+  if (!/^image\//.test(blob.type)) throw new Error(/photos\.google\.com/.test(url) ? 'that was a link to the Google Photos page. Open the photo, then drag the picture itself' : 'that link isn’t a picture');
+  const ext = (blob.type.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
+  return [new File([blob], 'dropped-photo.' + ext, { type: blob.type, lastModified: Date.now() })];
+}
+const dropEl = document.createElement('div'); dropEl.id = 'dropzone'; dropEl.hidden = true; document.body.appendChild(dropEl);
+let dropDepth = 0;
+const dropOk = e => { const t = e.dataTransfer && e.dataTransfer.types; return t && Array.from(t).some(x => x === 'Files' || x === 'text/uri-list' || x === 'text/html'); };
+document.addEventListener('dragenter', e => {
+  if (!dropOk(e)) return; e.preventDefault(); dropDepth++;
+  const t = phDropTarget();
+  dropEl.innerHTML = `<div>${ICON_CAM}<b>${t ? 'Drop to add to ' + esc(t.name) : 'Drop photos to place them on the map'}</b><small>${t ? 'Photo files, or a picture dragged from Google Photos in your browser' : 'Uses the GPS location saved in each photo. To attach a photo to a feature, open the feature first.'}</small></div>`;
+  dropEl.hidden = false;
+});
+document.addEventListener('dragover', e => { if (dropOk(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
+document.addEventListener('dragleave', e => { if (!dropOk(e)) return; if (--dropDepth <= 0) { dropDepth = 0; dropEl.hidden = true; } });
+document.addEventListener('drop', async e => {
+  if (!dropOk(e)) return;
+  e.preventDefault(); dropDepth = 0; dropEl.hidden = true;
+  const t = phDropTarget();
+  let files;
+  try { files = await phFromDrop(e.dataTransfer); } catch (err) { toast('Problem: ' + err.message); return; }
+  if (t) phAddTo(t.kind, t.fid, files); else phToMarkers(files);
+});
 /* ----- viewer ----- */
 const pvEl = document.getElementById('photoview');
 function phOpen(kind, fid, id) {
@@ -2928,8 +2979,8 @@ function phSheetClick(e) {
   return false;
 }
 /* ----- geotagged photos to markers ----- */
-async function phToMarkers() {
-  const files = await phPick(); if (!files.length) return;
+async function phToMarkers(given) {
+  const files = given || await phPick(); if (!files.length) return;
   sheet.hidden = true; toast('Reading ' + files.length + ' photo' + (files.length === 1 ? '' : 's') + '…');
   const recs = []; let noGps = 0, bad = 0, err = '';
   for (const f of files) {

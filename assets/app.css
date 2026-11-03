@@ -269,3 +269,9 @@ select option:disabled { color: var(--muted); }
 .airitem.auth { border-left-color: #e64980; } .airitem.bad { border-left-color: #ff4d4f; }
 .airitem b { display: block; font-size: 13px; } .airitem small { display: block; font-size: 12px; opacity: .8; margin-top: 2px; }
 .airceil { font: 700 10px/16px system-ui, sans-serif; color: #fff; background: rgba(230,73,128,.85); border-radius: 4px; text-align: center; }
+#dropzone { position: fixed; inset: 0; z-index: 3000; background: rgba(11,58,74,.55); display: flex; align-items: center; justify-content: center; pointer-events: none; }
+#dropzone[hidden] { display: none; }
+#dropzone > div { background: var(--panel); color: var(--ink); border: 2px dashed var(--accent); border-radius: 16px; padding: 22px 28px; max-width: 420px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 6px; box-shadow: 0 10px 40px rgba(0,0,0,.4); }
+#dropzone svg { width: 34px; height: 34px; color: var(--accent); }
+#dropzone small { color: var(--muted); font-size: 13px; }
+.phdrop{font-size:10px;font-weight:500;color:var(--muted)}

@@ -117,7 +117,6 @@ mod app {
             .with_initialization_script(&init)
             .with_custom_protocol("wp".into(), move |_id, req| serve(&proto_ctx, req))
             .with_ipc_handler(move |req: Request<String>| handle(&ipc_ctx, req.body()))
-            .with_drag_drop_handler(|_| true)
             .with_url("https://wp.localhost/")
             .build(&window);
         let webview = match webview {
