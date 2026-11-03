@@ -305,3 +305,8 @@ select option:disabled { color: var(--muted); }
 .hzpop b:first-child{display:block;font-size:14px;margin-bottom:3px}
 .hzpop small{display:block;color:#555;margin-top:4px;font-size:11.5px}
 .hzsym svg{width:14px;height:14px;display:block;margin:3px auto 0}
+.subrow { display: flex; align-items: center; gap: 8px; }
+.subrow .subh { flex: 1; }
+.fsel { width: 22px; height: 22px; flex: 0 0 auto; accent-color: var(--accent); margin: 0; }
+.selbar { position: sticky; bottom: -1px; margin: 12px -4px -4px; display: flex; gap: 8px; align-items: center; padding: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 -4px 14px rgba(0,0,0,.18); }
+.selbar span { flex: 1; font-weight: 600; font-size: 14px; }

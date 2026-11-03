@@ -8,7 +8,7 @@ const CAMERAS = {
   wide: { label: 'Wide 24 mm (1x)', f: 24, px: 8192 },
   tele: { label: 'Medium tele 70 mm (3x)', f: 70, px: 8064 },
 };
-const APP_VERSION = '1.46';
+const APP_VERSION = '1.47';
 const MAX_ALT = 121.92;                          // 400 ft
 const HZ_DEFAULTS = { over: { top: 15.24, buf: 15.24 }, nofly: { top: 0, buf: 10 } };
 const STOP_PENALTY_S = 2.5;                      // time lost decelerating at a stop-and-turn waypoint
@@ -2555,7 +2555,7 @@ function markerChange(t) {
   mkSave(); renderMarkers();
 }
 /* ----- list ----- */
-function openMarkers() { sheetMode = 'markers'; renderMarkerList(); sheet.hidden = false; }
+function openMarkers() { ftSel = null; ftArmed = false; sheetMode = 'markers'; renderMarkerList(); sheet.hidden = false; }
 function renderMarkerList() {
   const c = map.getCenter(), here = [c.lat, c.lng];
   const counts = {}; markers.forEach(m => { counts[m.type] = (counts[m.type] || 0) + 1; });
@@ -2566,31 +2566,56 @@ function renderMarkerList() {
     <label class="chk"><input type="checkbox" id="mkall"${mkVis.all ? ' checked' : ''}>Show markers on the map</label>
     <label class="chk"><input type="checkbox" id="mklabels"${mkVis.labels ? ' checked' : ''}>Show names</label>
     <div class="mktypes">${Object.entries(MK_TYPES).map(([k, t]) => `<button class="mkt${mkVis.hidden[k] ? '' : ' on'}" data-l2="vis" data-v="${k}"><i style="background:${t.color}">${mkIcon(k, 16)}</i><span>${t.label}${counts[k] ? ' · ' + counts[k] : ''}</span></button>`).join('')}</div>
-    <h3 class="subh">${markers.length} marker${markers.length === 1 ? '' : 's'} · nearest first</h3>`;
+    <div class="subrow"><h3 class="subh">${markers.length} marker${markers.length === 1 ? '' : 's'} · nearest first</h3>${markers.length ? (ftSel ? `<button class="btn small" data-l2="selallm">${markers.every(x => ftSel.m.has(x.id)) ? 'None' : 'All'}</button>` : '<button class="btn small" data-l2="selon">Select…</button>') : ''}</div>`;
   if (!markers.length) h += `<p class="note">None yet.</p>`;
   else h += '<div class="mlist">' + list.slice(0, 200).map(m => {
     const t = MK_TYPES[m.type] || MK_TYPES.general;
-    return `<div class="mitem"><i class="mkdot" style="background:${t.color}">${mkIcon(m.type, 14)}</i><div style="flex:1;min-width:0"><b>${esc(m.name || t.label)}</b><small>${t.label} · ${fmtDist(hav(here, [m.lat, m.lng]))} from map center${m.photos && m.photos.length ? ' · ' + m.photos.length + ' photo' + (m.photos.length === 1 ? '' : 's') : ''}</small></div>
-      <button class="btn small" data-l2="go" data-id="${m.id}">Go to</button><button class="btn small" data-l2="edit" data-id="${m.id}">Edit</button></div>`;
+    return `<div class="mitem${ftSel && ftSel.m.has(m.id) ? ' on' : ''}">${ftSel ? `<input type="checkbox" class="fsel" data-fsel="m:${m.id}"${ftSel.m.has(m.id) ? ' checked' : ''} aria-label="Select">` : ''}<i class="mkdot" style="background:${t.color}">${mkIcon(m.type, 14)}</i><div style="flex:1;min-width:0"><b>${esc(m.name || t.label)}</b><small>${t.label} · ${fmtDist(hav(here, [m.lat, m.lng]))} from map center${m.photos && m.photos.length ? ' · ' + m.photos.length + ' photo' + (m.photos.length === 1 ? '' : 's') : ''}</small></div>
+      ${ftSel ? '' : `<button class="btn small" data-l2="go" data-id="${m.id}">Go to</button><button class="btn small" data-l2="edit" data-id="${m.id}">Edit</button>`}</div>`;
   }).join('') + '</div>';
-  h += `<h3 class="subh">Boundaries & lines · ${shapes.length}</h3>
+  h += `<div class="subrow"><h3 class="subh">Boundaries & lines · ${shapes.length}</h3>${shapes.length ? (ftSel ? `<button class="btn small" data-l2="selalls">${shapes.every(x => ftSel.s.has(x.id)) ? 'None' : 'All'}</button>` : '<button class="btn small" data-l2="selon">Select…</button>') : ''}</div>
     <div class="btns" style="margin-bottom:8px"><button class="btn" data-l2="barea">Draw area</button><button class="btn" data-l2="bline">Draw line</button><button class="btn" data-l2="hfind">Find power lines & towers…</button></div>
     <label class="chk"><input type="checkbox" id="shall"${mkVis.shapes !== false ? ' checked' : ''}>Show boundaries and lines on the map</label>`;
   if (shapes.length) h += '<div class="mlist">' + shapes.map(s => {
     const t = shType(s);
-    return `<div class="mitem"><i class="shsw" style="border-color:${t.color};background:${s.kind === 'area' ? t.color + '33' : 'transparent'}${t.dash ? ';border-style:dashed' : ''}"></i><div style="flex:1;min-width:0"><b>${esc(s.name || t.label)}</b><small>${t.label} · ${shSize(s)}${s.hazard === 'over' ? ' · ⚡ fly-over hazard' : s.hazard === 'nofly' ? ' · ⛔ no-fly zone' : ''}</small></div>
-      <button class="btn small" data-l2="sgo" data-id="${s.id}">Go to</button><button class="btn small" data-l2="sedit" data-id="${s.id}">Edit</button></div>`;
+    return `<div class="mitem${ftSel && ftSel.s.has(s.id) ? ' on' : ''}">${ftSel ? `<input type="checkbox" class="fsel" data-fsel="s:${s.id}"${ftSel.s.has(s.id) ? ' checked' : ''} aria-label="Select">` : ''}<i class="shsw" style="border-color:${t.color};background:${s.kind === 'area' ? t.color + '33' : 'transparent'}${t.dash ? ';border-style:dashed' : ''}"></i><div style="flex:1;min-width:0"><b>${esc(s.name || t.label)}</b><small>${t.label} · ${shSize(s)}${s.hazard === 'over' ? ' · ⚡ fly-over hazard' : s.hazard === 'nofly' ? ' · ⛔ no-fly zone' : ''}</small></div>
+      ${ftSel ? '' : `<button class="btn small" data-l2="sgo" data-id="${s.id}">Go to</button><button class="btn small" data-l2="sedit" data-id="${s.id}">Edit</button>`}</div>`;
   }).join('') + '</div>';
   h += `<h3 class="subh">Share</h3><div class="btns"><button class="btn" data-l2="import">Import KML / KMZ / GPX…</button><button class="btn" data-l2="export"${markers.length || shapes.length ? '' : ' disabled'}>Export KML</button></div>
     <p class="note">Works with HuntStand, Google Earth, Avenza and onX exports. Imported points become markers; types are guessed from their names. Points become markers; outlines and lines become boundaries and lines. GPS tracks are skipped.</p>
-    <div class="btns" style="margin-top:4px"><button class="btn" data-l2="close">Close</button></div></div>`;
+    <div class="btns" style="margin-top:4px"><button class="btn" data-l2="close">Close</button></div>${ftSel ? ftBar() : ''}</div>`;
+  const keep = sheet.scrollTop;
   sheet.innerHTML = h;
+  sheet.scrollTop = keep;
+}
+/* ----- select several features to delete ----- */
+let ftSel = null, ftArmed = false;
+function ftBar() {
+  const n = ftSel.m.size + ftSel.s.size;
+  const what = [ftSel.m.size ? ftSel.m.size + ' marker' + (ftSel.m.size === 1 ? '' : 's') : '', ftSel.s.size ? ftSel.s.size + (ftSel.s.size === 1 ? ' boundary or line' : ' boundaries & lines') : ''].filter(Boolean).join(' and ');
+  return `<div class="selbar"><span>${n ? esc(what) + ' selected' : 'Tick the features to delete'}</span><button class="btn small" data-l2="seloff">Cancel</button><button class="btn small danger" data-l2="seldel"${n ? '' : ' disabled'}>${ftArmed ? 'Tap again to delete ' + n : 'Delete ' + (n || '')}</button></div>`;
 }
 function markerListClick(e) {
-  if (e.target === sheet) { sheet.hidden = true; return; }
+  if (e.target === sheet) { sheet.hidden = true; ftSel = null; return; }
+  const cb = e.target.closest('input[data-fsel]');
+  if (cb && ftSel) { const [w, id] = cb.dataset.fsel.split(':'); const set = w === 'm' ? ftSel.m : ftSel.s; if (cb.checked) set.add(id); else set.delete(id); ftArmed = false; cb.closest('.mitem').classList.toggle('on', cb.checked); const bar = sheet.querySelector('.selbar'); if (bar) bar.outerHTML = ftBar(); return; }
+  const row = ftSel && e.target.closest('.mitem');
+  if (row && !e.target.closest('button')) { const c2 = row.querySelector('input[data-fsel]'); if (c2) c2.click(); return; }
   const b = e.target.closest('button[data-l2]'); if (!b || b.disabled) return;
   const k = b.dataset.l2, m = markers.find(x => x.id === b.dataset.id);
-  if (k === 'close') { sheet.hidden = true; return; }
+  if (k === 'close') { sheet.hidden = true; ftSel = null; return; }
+  if (k === 'selon') { ftSel = { m: new Set(), s: new Set() }; ftArmed = false; renderMarkerList(); return; }
+  if (k === 'seloff') { ftSel = null; ftArmed = false; renderMarkerList(); return; }
+  if (k === 'selallm' || k === 'selalls') { const set = k === 'selallm' ? ftSel.m : ftSel.s, arr = k === 'selallm' ? markers : shapes; if (arr.every(x => set.has(x.id))) set.clear(); else arr.forEach(x => set.add(x.id)); ftArmed = false; renderMarkerList(); return; }
+  if (k === 'seldel') {
+    if (!ftArmed) { ftArmed = true; const bar = sheet.querySelector('.selbar'); if (bar) bar.outerHTML = ftBar(); return; }
+    const nm = ftSel.m.size, ns = ftSel.s.size;
+    if (nm) { markers = markers.filter(x => !ftSel.m.has(x.id)); mkSave(); renderMarkers(); }
+    if (ns) { shapes = shapes.filter(x => !ftSel.s.has(x.id)); shSave(); renderShapes(); }
+    ftSel = null; ftArmed = false; renderMarkerList();
+    toast('Deleted ' + [nm ? nm + ' marker' + (nm === 1 ? '' : 's') : '', ns ? ns + (ns === 1 ? ' boundary or line' : ' boundaries & lines') : ''].filter(Boolean).join(' and '));
+    return;
+  }
   if (k === 'photos') { phToMarkers(); return; }
   if (k === 'add') { sheet.hidden = true; setTool('marker'); return; }
   if (k === 'barea' || k === 'bline') { sheet.hidden = true; setTool(k); return; }
