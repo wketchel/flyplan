@@ -20,6 +20,7 @@
     importMbtiles: function () { post('importMbtiles'); },
     listMaps: function () { post('listMaps'); },
     deleteMap: function (id) { post('deleteMap', [id]); },
+    mapCoverage: function (id, z) { post('mapCoverage', [id, z]); },
     findController: function () { post('findController'); },
     sendMission: function (folder, name, template, waylines, preview) { post('sendMission', [folder, name, template, waylines, preview || '']); },
     openUrl: function (u) { post('openUrl', [u]); },

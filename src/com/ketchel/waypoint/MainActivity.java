@@ -439,6 +439,14 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public void mapCoverage(final String id, final int z) {
+            new Thread(new Runnable() { public void run() {
+                try { JSONObject o = new JSONObject(); o.put("type", "mapCov"); o.put("id", id); o.put("z", z); o.put("tiles", mb.coverage(id, z)); emit(o); }
+                catch (Exception ignored) { }
+            } }).start();
+        }
+
+        @JavascriptInterface
         public void deleteMap(final String id) {
             new Thread(new Runnable() { public void run() { mb.delete(id); emitMaps(null); } }).start();
         }

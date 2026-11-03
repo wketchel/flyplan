@@ -995,7 +995,7 @@ function renderTools() {
   html += '<div class="toolgroup">' + b('missions', 'Missions') + b('markers', 'Features') + b('sync', syLabel()) + b('measure', 'Measure', t === 'measure') + b('locate', 'My location') + b('layers', BASES[baseLayer].label, layerMenu) + b('offline', 'Offline maps') + b('clear', 'Clear', false, !S.wps.length && !S.shape) + '</div>';
   // The map menu opens beside the toolbar (not below it), so it never runs off the bottom of the screen.
   if (layerMenu) html += '<div class="flyout"><div class="toolgroup menu">' + Object.entries(BASES).map(([k, v]) => b('base:' + k, (k === baseLayer ? '✓ ' : '') + v.label)).join('') + '</div>' +
-    '<div class="toolgroup menu">' + myMaps.map(m => b('my:' + m.id, (myState(m.id).on ? '✓ ' : '') + esc(m.name))).join('') + b('mymaps', 'My maps…') + '</div></div>';
+    '<div class="toolgroup menu">' + myMaps.map(m => b('my:' + m.id, (myState(m.id).on ? '✓ ' : '') + esc(mapTitle(m)))).join('') + b('mymaps', 'My maps…') + '</div></div>';
   const tools = document.getElementById('tools');
   tools.innerHTML = html;
   const fly = tools.querySelector('.flyout'), lb = tools.querySelector('[data-tool=layers]');
@@ -1567,6 +1567,7 @@ window.onNative = function (json) {
   if (m.type === 'imported') { if (m.purpose === 'markers') importMarkers(m); else importMission(m); return; }
   if (m.type === 'places') { showPlaces(m); return; }
   if (m.type === 'maps' || m.type === 'mbProgress' || m.type === 'mbError') { mapsMsg(m); return; }
+  if (m.type === 'mapCov') { covMsg(m); return; }
   if (m.type === 'usgsZoom') { setUsgsMax(m.zoom); return; }
   if (/^sync/.test(m.type) || m.type === 'resume') { syncMsg(m); return; }
   if (m.type === 'location') gotLocation(m.lat, m.lng);
@@ -2175,6 +2176,7 @@ function saveMyState() { try { localStorage.setItem('planner.mymaps', JSON.strin
 function myBounds(m) { return [[m.bounds[1], m.bounds[0]], [m.bounds[3], m.bounds[2]]]; }
 function applyMyMaps() {
   Object.keys(myLayers).forEach(id => { if (!myMaps.some(m => m.id === id)) { map.removeLayer(myLayers[id]); delete myLayers[id]; } });
+  mapSortByDate();
   myMaps.forEach((m, i) => {
     const st = myState(m.id);
     if (!myLayers[m.id]) {
@@ -2183,10 +2185,11 @@ function applyMyMaps() {
       myLayers[m.id] = PC ? window.PcHost.mapLayer(m, opt) : L.tileLayer((window.MB_BASE || 'https://mbtiles.invalid/') + `${m.id}/{z}/{x}/{y}`, opt);
     }
     const lyr = myLayers[m.id];
-    lyr.setOpacity(st.opacity);
+    lyr.setOpacity(st.opacity); lyr.setZIndex(20 + i);   // newest imagery on top
     if (st.on && !map.hasLayer(lyr)) lyr.addTo(map);
     if (!st.on && map.hasLayer(lyr)) map.removeLayer(lyr);
   });
+  covDraw();
 }
 function openMyMaps() { sheetMode = 'maps'; myArmed = null; renderMyMaps(); sheet.hidden = false; if (native && native.listMaps) native.listMaps(); }
 function renderMyMaps() {
@@ -2200,19 +2203,24 @@ function renderMyMaps() {
   const busy = myImport && !myImport.error;
   h += `<div class="btns" style="margin-bottom:6px"><button class="btn" data-m="close">Close</button><button class="btn primary" data-m="import"${busy ? ' disabled' : ''}>Import MBTiles…</button></div>`;
   h += `<h3 class="subh">Your maps</h3>`;
+  if (myMaps.length) h += `<label class="chk"><input type="checkbox" id="covon"${covOn() ? ' checked' : ''}>Show each map's outline and date on the map</label><p class="note" style="margin-top:-4px">Newest imagery draws on top where maps overlap. Dates come from the file name (for example <b>north-2026-03-14.mbtiles</b>) unless you set one.</p>`;
   if (!native || !native.importMbtiles) h += `<p class="note">${PC ? 'Opening map files needs Microsoft Edge or Google Chrome.' : 'Importing maps works in the Android app.'}</p>`;
   else if (!myMaps.length) h += `<p class="note">None yet.</p>`;
-  else h += '<div class="mlist">' + myMaps.map(m => {
+  else h += '<div class="mlist">' + myMaps.slice().reverse().map(m => {
     const st = myState(m.id);
-    if (m.locked) return `<div class="mitem"><div style="flex:1;min-width:0"><b>${esc(m.name)}</b><small>Allow access to the file again to show it</small></div><button class="btn small primary" data-m="unlock" data-id="${m.id}">Allow access</button><button class="btn small danger" data-m="del" data-id="${m.id}">${myArmed === m.id ? 'Confirm' : 'Remove'}</button></div>`;
-    return `<div class="mitem" style="flex-wrap:wrap"><div style="flex:1;min-width:0"><b>${esc(m.name)}</b><small>${fmtBytes(m.size)} · zoom ${m.minzoom}–${m.maxzoom}${m.missing ? ' · <span style="color:var(--bad)">file not found</span>' : ''}</small></div>
+    if (m.locked) return `<div class="mitem"><div style="flex:1;min-width:0"><b>${esc(mapTitle(m))}</b><small>Allow access to the file again to show it</small></div><button class="btn small primary" data-m="unlock" data-id="${m.id}">Allow access</button><button class="btn small danger" data-m="del" data-id="${m.id}">${myArmed === m.id ? 'Confirm' : 'Remove'}</button></div>`;
+    const dt = mapDate(m);
+    return `<div class="mitem" style="flex-wrap:wrap"><i class="covsw" style="border-color:${mapColor(m)}"></i><div style="flex:1;min-width:0"><b>${esc(mapTitle(m))}</b><small style="font-family:var(--font)"><b>${esc(fmtMapDate(dt.date))}</b> ${dt.src === 'edited' ? '(you set)' : dt.src === 'name' ? '(from the file name)' : '(date added; put the date in the file name or set it)'} · ${fmtBytes(m.size)} · zoom ${m.minzoom}–${m.maxzoom}${m.missing ? ' · <span style="color:var(--bad)">file not found</span>' : ''}</small></div>
+      <button class="btn small" data-m="date" data-id="${m.id}">Date…</button>
       <button class="btn small" data-m="toggle" data-id="${m.id}">${st.on ? 'Hide' : 'Show'}</button>
       <button class="btn small" data-m="zoom" data-id="${m.id}"${m.bounds ? '' : ' disabled'}>Go to</button>
       <button class="btn small danger" data-m="del" data-id="${m.id}">${myArmed === m.id ? 'Confirm' : DESKTOP ? 'Remove' : 'Delete'}</button>
+      ${myDateEdit === m.id ? `<div class="row" style="width:100%;align-items:end;margin:6px 0 0"><label class="f"><span>Date of this imagery</span><div class="in"><input type="date" id="mdate" value="${/^\d{4}-\d\d-\d\d$/.test(dt.date) ? dt.date : ''}"></div></label><div class="btns" style="margin:0"><button class="btn small primary" data-m="dsave" data-id="${m.id}">Save</button>${dt.src === 'edited' ? `<button class="btn small" data-m="dclear" data-id="${m.id}">${dateFromName(mapFile(m)) ? 'Use file name' : 'Clear'}</button>` : ''}</div></div>` : ''}
       <div class="range" style="width:100%"><span class="note" style="margin:0;min-width:64px">Opacity</span><input type="range" min="0.2" max="1" step="0.05" value="${st.opacity}" data-op="${m.id}"><output>${Math.round(st.opacity * 100)}%</output></div></div>`;
   }).join('') + '</div>';
   sheet.innerHTML = h + '</div>';
 }
+sheet.addEventListener('change', e => { if (sheetMode === 'maps' && e.target.id === 'covon') { covSet(e.target.checked); } });
 sheet.addEventListener('input', e => {
   const t = e.target; if (sheetMode !== 'maps' || !t.dataset.op) return;
   const st = myState(t.dataset.op); st.opacity = Number(t.value); t.nextElementSibling.textContent = Math.round(st.opacity * 100) + '%';
@@ -2226,6 +2234,9 @@ function mapsClick(e) {
   if (a === 'close') { sheet.hidden = true; return; }
   if (a === 'import') { if (native && native.importMbtiles) { myImport = null; native.importMbtiles(); } return; }
   if (a === 'unlock') { native.unlockMap(id); return; }
+  if (a === 'date' && m) { myDateEdit = myDateEdit === id ? null : id; renderMyMaps(); return; }
+  if (a === 'dsave' && m) { const v = (sheet.querySelector('#mdate') || {}).value; if (!v) { toast('Pick a date first'); return; } mapSetDate(m, v); return; }
+  if (a === 'dclear' && m) { mapSetDate(m, null); return; }
   if (a === 'toggle') { const st = myState(id); st.on = !st.on; saveMyState(); applyMyMaps(); renderTools(); }
   else if (a === 'zoom' && m && m.bounds) {
     const st = myState(id); if (!st.on) { st.on = true; saveMyState(); applyMyMaps(); renderTools(); }
@@ -2250,6 +2261,136 @@ function mapsMsg(m) {
   }
   if (!sheet.hidden && sheetMode === 'maps') renderMyMaps();
 }
+
+
+/* ----- map dates and outlines -----
+   A basemap can be a patchwork of flights from different days. Each map gets a colour, an outline that follows where it
+   actually has imagery, and a date tag. Dates come from the file name unless the user sets one (synced by file name). */
+const COV_COLORS = ['#ff6b6b', '#4dabf7', '#ffd43b', '#69db7c', '#da77f2', '#ffa94d', '#3bc9db', '#f783ac', '#a9e34b', '#748ffc'];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const covLayer = L.layerGroup().addTo(map);
+let covCache = (() => { try { return JSON.parse(localStorage.getItem('planner.mapcov')) || {}; } catch (e) { return {}; } })(), covAsked = {};
+function covOn() { try { return localStorage.getItem('planner.mapOutlines') !== '0'; } catch (e) { return true; } }
+function covSet(on) { try { localStorage.setItem('planner.mapOutlines', on ? '1' : '0'); } catch (e) {} covDraw(); }
+function mapTitle(m) { return m.file || m.name || 'My map'; }
+function mapFile(m) { return String(m.file || m.name || '').replace(/\.mbtiles$/i, ''); }
+function mapKey(m) { return 'md:' + mapFile(m).toLowerCase(); }
+function mdLoad() { try { return JSON.parse(localStorage.getItem('planner.mapdates')) || []; } catch (e) { return []; } }
+let mapDates = mdLoad();
+function mdSave() { syStamp('mapdates', mapDates); try { localStorage.setItem('planner.mapdates', JSON.stringify(mapDates)); } catch (e) {} }
+function validYMD(y, mo, d) { return y >= 1990 && y <= 2100 && mo >= 1 && mo <= 12 && (d == null || (d >= 1 && d <= 31)); }
+function pad2(n) { return String(n).padStart(2, '0'); }
+/* Finds a date in a file name: 2026-03-14, 2026_03_14, 20260314, 03-14-2026, 3-14-26, or just 2026-03. */
+function dateFromName(s) {
+  s = String(s || '');
+  let m = s.match(/(?:^|\D)((?:19|20)\d\d)[-_. ]?(\d\d)[-_. ]?(\d\d)(?!\d)/);
+  if (m && validYMD(+m[1], +m[2], +m[3])) return m[1] + '-' + m[2] + '-' + m[3];
+  m = s.match(/(?:^|\D)(\d{1,2})[-_.](\d{1,2})[-_.]((?:19|20)?\d\d)(?!\d)/);
+  if (m) { const y = m[3].length === 2 ? 2000 + +m[3] : +m[3]; if (validYMD(y, +m[1], +m[2])) return y + '-' + pad2(m[1]) + '-' + pad2(m[2]); }
+  m = s.match(/(?:^|\D)((?:19|20)\d\d)[-_.](\d\d)(?!\d)/);
+  if (m && validYMD(+m[1], +m[2])) return m[1] + '-' + m[2];
+  m = s.match(/(?:^|[^a-z])(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[-_. ]?(\d{1,2})?[-_., ]*((?:19|20)\d\d)/i);
+  if (m) { const mo = MONTHS.findIndex(x => x.toLowerCase() === m[1].toLowerCase()) + 1; return m[3] + '-' + pad2(mo) + (m[2] && +m[2] <= 31 ? '-' + pad2(m[2]) : ''); }
+  return null;
+}
+function addedDate(m) {
+  const id = String(m.id || ''); let t = null;
+  if (/^[mw]\d{12,}$/.test(id)) t = +id.slice(1); else if (/^pc[0-9a-z]+$/.test(id)) t = parseInt(id.slice(2), 36);
+  if (!t || !isFinite(t)) return null;
+  const d = new Date(t); return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+}
+function mapDate(m) {
+  const r = mapDates.find(x => x.id === mapKey(m)); if (r && r.date) return { date: r.date, src: 'edited' };
+  const n = dateFromName(mapFile(m)); if (n) return { date: n, src: 'name' };
+  return { date: addedDate(m) || '', src: 'added' };
+}
+function fmtMapDate(d) {
+  const m = String(d || '').match(/^(\d{4})-(\d\d)(?:-(\d\d))?$/); if (!m) return 'No date';
+  return MONTHS[+m[2] - 1] + (m[3] ? ' ' + (+m[3]) + ',' : '') + ' ' + m[1];
+}
+function mapSortByDate() { myMaps.sort((a, b) => (mapDate(a).date || '').localeCompare(mapDate(b).date || '') || String(a.id).localeCompare(String(b.id))); }
+function mapColor(m) {
+  const st = myState(m.id);
+  if (!st.color) { const used = new Set(myMaps.map(x => myStateCache[x.id] && myStateCache[x.id].color).filter(Boolean)); st.color = COV_COLORS.find(c => !used.has(c)) || COV_COLORS[Object.keys(myStateCache).length % COV_COLORS.length]; saveMyState(); }
+  return st.color;
+}
+let myDateEdit = null;
+function mapSetDate(m, d) {
+  const key = mapKey(m);
+  mapDates = mapDates.filter(x => x.id !== key);
+  if (d) mapDates.push({ id: key, file: mapFile(m), date: d });
+  mdSave(); myDateEdit = null; applyMyMaps(); renderMyMaps();
+}
+/* Coverage: which tiles exist at a zoom detailed enough for a good outline (about 60-130 m squares) but small enough to list. */
+function covZoom(m) {
+  let z = Math.min(m.maxzoom, 19);
+  if (m.bounds) {
+    const est = z2 => { const n = Math.pow(2, z2), x = v => (v + 180) / 360 * n, y = v => (1 - Math.log(Math.tan(v * Math.PI / 180) + 1 / Math.cos(v * Math.PI / 180)) / Math.PI) / 2 * n;
+      return Math.abs(x(m.bounds[2]) - x(m.bounds[0]) + 1) * Math.abs(y(m.bounds[1]) - y(m.bounds[3]) + 1); };
+    while (z > m.minzoom && est(z) > 40000) z--;
+  }
+  return Math.max(m.minzoom, z);
+}
+function covMsg(msg) {
+  const m = myMaps.find(x => x.id === msg.id); if (!m) return;
+  covCache[m.id] = { z: msg.z, size: m.size, loops: covLoops(msg.tiles || [], msg.z) };
+  try { localStorage.setItem('planner.mapcov', JSON.stringify(covCache)); } catch (e) { try { localStorage.removeItem('planner.mapcov'); } catch (e2) {} }
+  covDraw();
+}
+/* Traces the outline of a set of tiles (flat [x, y, x, y, ...], XYZ) into closed loops of [lat, lng]. */
+function covLoops(t, z) {
+  const has = new Set(); for (let i = 0; i < t.length; i += 2) has.add(t[i] + ',' + t[i + 1]);
+  const out = new Map(); let ne = 0;
+  const edge = (x1, y1, x2, y2) => { const k = x1 + ',' + y1; (out.get(k) || out.set(k, []).get(k)).push([x2, y2]); ne++; };
+  has.forEach(k => {
+    const [x, y] = k.split(',').map(Number);
+    if (!has.has(x + ',' + (y - 1))) edge(x, y, x + 1, y);
+    if (!has.has((x + 1) + ',' + y)) edge(x + 1, y, x + 1, y + 1);
+    if (!has.has(x + ',' + (y + 1))) edge(x + 1, y + 1, x, y + 1);
+    if (!has.has((x - 1) + ',' + y)) edge(x, y + 1, x, y);
+  });
+  const n = Math.pow(2, z), ll = (x, y) => [+(Math.atan(Math.sinh(Math.PI * (1 - 2 * y / n))) * 180 / Math.PI).toFixed(6), +(x / n * 360 - 180).toFixed(6)];
+  const loops = [];
+  while (ne > 0) {
+    const k0 = out.keys().next().value; let [x, y] = k0.split(',').map(Number); const pts = [[x, y]];
+    for (let guard = 0; guard < 1e6; guard++) {
+      const k = x + ',' + y, L2 = out.get(k); if (!L2 || !L2.length) break;
+      const [nx, ny] = L2.pop(); if (!L2.length) out.delete(k); ne--;
+      x = nx; y = ny; if (x + ',' + y === k0 && !(out.get(k0) || []).length) { pts.push([x, y]); break; }
+      pts.push([x, y]);
+    }
+    // drop points in the middle of straight runs
+    const s = pts.filter((p, i) => { if (i === 0 || i === pts.length - 1) return true; const a = pts[i - 1], b = pts[i + 1]; return !((a[0] === p[0] && p[0] === b[0]) || (a[1] === p[1] && p[1] === b[1])); });
+    if (s.length > 4) { const a = s[s.length - 2], p = s[0], b = s[1]; if ((a[0] === p[0] && p[0] === b[0]) || (a[1] === p[1] && p[1] === b[1])) { s.shift(); s[s.length - 1] = s[0]; } }
+    if (s.length >= 4) loops.push(s.map(p => ll(p[0], p[1])));
+  }
+  return loops;
+}
+function covDraw() {
+  covLayer.clearLayers();
+  if (!covOn()) return;
+  myMaps.forEach(m => {
+    if (m.missing || m.locked || !myState(m.id).on) return;
+    const c = covCache[m.id];
+    if (!c || c.size !== m.size) {
+      if (!covAsked[m.id] && native && native.mapCoverage) { covAsked[m.id] = 1; native.mapCoverage(m.id, covZoom(m)); }
+      if (!m.bounds) return;
+    }
+    const col = mapColor(m), dt = mapDate(m);
+    const loops = c && c.size === m.size ? c.loops : [[[m.bounds[1], m.bounds[0]], [m.bounds[1], m.bounds[2]], [m.bounds[3], m.bounds[2]], [m.bounds[3], m.bounds[0]], [m.bounds[1], m.bounds[0]]]];
+    if (!loops.length) return;
+    loops.forEach(lp => {
+      L.polyline(lp, { color: '#000', weight: 5, opacity: 0.35, interactive: false }).addTo(covLayer);
+      L.polyline(lp, { color: col, weight: 2.5, opacity: 0.95, interactive: false }).addTo(covLayer);
+    });
+    // tag at the top of the biggest piece
+    const big = loops.reduce((a, b) => b.length > a.length ? b : a), top = big.reduce((a, b) => b[0] > a[0] ? b : a);
+    const tag = L.marker(top, { zIndexOffset: 900, icon: L.divIcon({ className: '', html: `<div class="covtag" style="border-color:${col}"><b>${esc(fmtMapDate(dt.date))}</b><small>${esc(mapTitle(m))}</small></div>`, iconSize: [180, 38], iconAnchor: [90, -4] }) }).addTo(covLayer);
+    tag.on('click', () => toast(`${mapTitle(m)}: imagery from ${fmtMapDate(dt.date)}${dt.src === 'added' ? ' (date added; no date in the file name)' : dt.src === 'edited' ? ' (date you set)' : ''}`));
+  });
+}
+map.on('zoomend', () => map.getContainer().classList.toggle('covnames', map.getZoom() >= 16));
+map.getContainer().classList.toggle('covnames', map.getZoom() >= 16);
 
 /* ---------- markers ----------
    Landmarks that stay on the map for every mission: stands, feeders, trail cams, tanks, gates and so on. Stored in the
@@ -3721,8 +3862,8 @@ function airBlocking() {
    change always wins and deletions are explicit, a device that reads an out-of-date copy can't wipe out anything: the
    next sync from the device that has the newer change puts it back. Map files, offline areas, settings and the plan on
    screen don't sync. */
-const SY_KINDS = ['markers', 'shapes', 'missions'];
-const SY_LABEL = { markers: 'markers', shapes: 'boundaries and lines', missions: 'saved missions' };
+const SY_KINDS = ['markers', 'shapes', 'missions', 'mapdates'];
+const SY_LABEL = { markers: 'markers', shapes: 'boundaries and lines', missions: 'saved missions', mapdates: 'map dates' };
 const SY_TOMB_DAYS = 400;
 let sy = { busy: false, again: false, manual: false, status: '', cls: '', timer: null, info: null, perm: false, armed: false };
 function syGet(k) { try { return JSON.parse(localStorage.getItem(k)) || {}; } catch (e) { return {}; } }
@@ -3735,7 +3876,7 @@ function syHash(r) {
   h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
   return (h2 >>> 0).toString(36) + (h1 >>> 0).toString(36);
 }
-function syList(kind) { return kind === 'markers' ? markers : kind === 'shapes' ? shapes : libLoad(); }
+function syList(kind) { return kind === 'markers' ? markers : kind === 'shapes' ? shapes : kind === 'mapdates' ? mapDates : libLoad(); }
 /* Called from every save: stamps records that changed since the last save and records deletions. */
 function syStamp(kind, arr) {
   const snap = syGet('planner.sync.snap');
@@ -3762,7 +3903,7 @@ function syInit() {
     let fix = false;
     arr.forEach(r => { if (!r || !r.id) return; if (!r._t) { r._t = 1; fix = true; } s[r.id] = syHash(r); });
     if (fix) { // write the stamps back without restamping
-      const key = kind === 'markers' ? 'planner.markers' : kind === 'shapes' ? 'planner.shapes' : LIB_KEY;
+      const key = kind === 'markers' ? 'planner.markers' : kind === 'shapes' ? 'planner.shapes' : kind === 'mapdates' ? 'planner.mapdates' : LIB_KEY;
       try { localStorage.setItem(key, JSON.stringify(arr)); } catch (e) {}
     }
   });
@@ -3870,6 +4011,7 @@ function syApply(merged) {
       sySet('planner.sync.snap', snap);
       if (kind === 'markers') { markers = next; try { localStorage.setItem('planner.markers', JSON.stringify(markers)); } catch (e) {} renderMarkers(); }
       else if (kind === 'shapes') { shapes = next; try { localStorage.setItem('planner.shapes', JSON.stringify(shapes)); } catch (e) {} renderShapes(); const sig = hzSignature(); if (sig !== hzSig) { hzSig = sig; hzChanged(); } }
+      else if (kind === 'mapdates') { mapDates = next; try { localStorage.setItem('planner.mapdates', JSON.stringify(next)); } catch (e) {} applyMyMaps(); if (!sheet.hidden && sheetMode === 'maps') renderMyMaps(); }
       else { try { localStorage.setItem(LIB_KEY, JSON.stringify(next)); } catch (e) {} if (!sheet.hidden && sheetMode === 'lib') renderLib(); }
     }
   });

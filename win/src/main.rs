@@ -251,6 +251,14 @@ mod app {
                     Err(e) => c.emit(json!({ "type": "mbError", "message": format!("Couldn't open that map: {e}") })),
                 }
             }
+            "mapCoverage" => {
+                let id = arg(a, 0);
+                let z = a.get(1).and_then(|v| v.as_i64()).unwrap_or(18).clamp(0, 24);
+                let path = { let s = c.settings.lock().unwrap(); s.maps().into_iter().find(|m| m["id"].as_str() == Some(id.as_str())).and_then(|m| m["path"].as_str().map(std::path::PathBuf::from)) };
+                if let Some(p) = path {
+                    if let Ok(conn) = core::open_mb(&p) { c.emit(json!({ "type": "mapCov", "id": id, "z": z, "tiles": core::mb_coverage(&conn, z) })); }
+                }
+            }
             "listMaps" => { let s = c.settings.lock().unwrap(); c.emit(core::maps_message(&s, None)); }
             "deleteMap" => {
                 let id = arg(a, 0);

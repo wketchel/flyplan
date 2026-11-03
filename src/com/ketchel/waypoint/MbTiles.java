@@ -79,7 +79,7 @@ final class MbTiles {
         o.put("id", id);
         String name = meta.get("name");
         File side = new File(dir, id + ".name");
-        if (side.exists()) name = new String(MtpTransfer.readAll(side), "UTF-8");
+        if (side.exists()) { name = new String(MtpTransfer.readAll(side), "UTF-8"); o.put("file", name); }
         o.put("name", name == null || name.length() == 0 ? "My map" : name);
         int minZ = -1, maxZ = -1;
         try { minZ = Integer.parseInt(meta.get("minzoom")); maxZ = Integer.parseInt(meta.get("maxzoom")); } catch (Exception ignored) { }
@@ -109,6 +109,20 @@ final class MbTiles {
         if (b != null) { JSONArray a = new JSONArray(); for (double v : b) a.put(v); o.put("bounds", a); }
         o.put("size", file(id).length());
         return o;
+    }
+
+    /** Which tiles exist at zoom z, as a flat [x, y, x, y, ...] list in XYZ numbering (for drawing the map's outline). */
+    JSONArray coverage(String id, int z) throws Exception {
+        JSONArray a = new JSONArray();
+        SQLiteDatabase d = db(id);
+        if (d == null) return a;
+        boolean isXyz = Boolean.TRUE.equals(xyz.get(id));
+        Cursor c = d.rawQuery("SELECT tile_column, tile_row FROM tiles WHERE zoom_level = ?", new String[]{String.valueOf(z)});
+        try {
+            int n = 0;
+            while (c.moveToNext() && n++ < 200000) { int x = c.getInt(0), r = c.getInt(1); a.put(x); a.put(isXyz ? r : (1 << z) - 1 - r); }
+        } finally { c.close(); }
+        return a;
     }
 
     JSONArray list() {

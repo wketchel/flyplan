@@ -162,6 +162,17 @@ pub fn mb_info(c: &Connection, file_name: &str) -> Result<MbInfo, String> {
     Ok(MbInfo { name: meta.get("name").cloned().filter(|s| !s.trim().is_empty()).unwrap_or(stem), minzoom, maxzoom, bounds, format: meta.get("format").cloned().unwrap_or_default() })
 }
 
+/// Which tiles exist at zoom z, as a flat [x, y, ...] list in XYZ numbering (for drawing the map's outline).
+pub fn mb_coverage(c: &Connection, z: i64) -> Vec<i64> {
+    let mut out = Vec::new();
+    if let Ok(mut st) = c.prepare("SELECT tile_column, tile_row FROM tiles WHERE zoom_level=?1 LIMIT 200000") {
+        if let Ok(rows) = st.query_map([z], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))) {
+            for (x, row) in rows.flatten() { out.push(x); out.push((1i64 << z) - 1 - row); }
+        }
+    }
+    out
+}
+
 /// One tile by XYZ address (MBTiles stores rows from the bottom).
 pub fn mb_tile(c: &Connection, z: i64, x: i64, y: i64) -> Option<Vec<u8>> {
     let row = (1i64 << z) - 1 - y;
@@ -196,6 +207,7 @@ impl Settings {
 pub fn maps_message(s: &Settings, added: Option<&str>) -> Value {
     let list: Vec<Value> = s.maps().into_iter().map(|mut m| {
         let missing = !Path::new(m["path"].as_str().unwrap_or("")).exists();
+        if let Some(f) = Path::new(m["path"].as_str().unwrap_or("")).file_stem() { m["file"] = json!(f.to_string_lossy()); }
         if missing { m["missing"] = json!(true); }
         m.as_object_mut().map(|o| o.remove("path"));
         m

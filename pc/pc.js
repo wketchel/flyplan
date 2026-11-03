@@ -392,6 +392,12 @@
     const lng = x => x / n * 360 - 180, lat = y => { const t = Math.PI * (1 - 2 * (n - y) / n); return 180 / Math.PI * Math.atan(Math.sinh(t)); };
     return [lng(x1), lat(y1), lng(x2 + 1), lat(y2 + 1)];
   };
+  MbReader.prototype.coverage = async function (z) {
+    const out = [], n = Math.pow(2, z); let seen = 0;
+    if (this.lookup) this.lookup.forEach((r, k) => { const p = k.split('/').map(Number); if (p[0] === z) out.push(p[1], n - 1 - p[2]); });
+    else await this.db.walk(this.ix.root, e => { if (e[0] > z || ++seen > 2000000) return false; if (e[0] === z) out.push(e[1], n - 1 - e[2]); });
+    return out;
+  };
   MbReader.prototype.tile = async function (z, x, y) {
     const d = this.db, row = Math.pow(2, z) - 1 - y; // MBTiles rows count from the bottom
     let rowid = null;
@@ -466,7 +472,7 @@
       await r.open();
       for (const m of Object.values(maps)) if (m.handle && await m.handle.isSameEntry(handle)) { m.locked = false; m.reader = r; emitMaps(m.info.id); return; }
       const id = 'pc' + Date.now().toString(36);
-      const info = { id, name: String(r.meta.name || file.name.replace(/\.mbtiles$/i, '')), size: file.size, minzoom: r.minzoom, maxzoom: r.maxzoom, bounds: r.bounds, format: r.meta.format || '' };
+      const info = { id, name: String(r.meta.name || file.name.replace(/\.mbtiles$/i, '')), file: file.name.replace(/\.mbtiles$/i, ''), size: file.size, minzoom: r.minzoom, maxzoom: r.maxzoom, bounds: r.bounds, format: r.meta.format || '' };
       maps[id] = { info, handle, reader: r, locked: false };
       try { await kvSet('map:' + id, handle); } catch (e) {}
       await saveMapList();
@@ -516,6 +522,7 @@
     syncForget() { syncHandle = null; localStorage.removeItem('pc.syncName'); kvDel('syncHandle'); },
     importMbtiles() { importMbtiles(); },
     listMaps() { emitMaps(); },
+    mapCoverage(id, z) { readerFor(id).then(r => r ? r.coverage(z) : null).then(t => { if (t) emit({ type: 'mapCov', id, z, tiles: t }); }).catch(() => {}); },
     deleteMap(id) { (async () => { delete maps[id]; await kvDel('map:' + id); await saveMapList(); emitMaps(); })(); },
     unlockMap(id) {
       const m = maps[id]; if (!m || !m.handle) return;
