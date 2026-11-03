@@ -8,7 +8,7 @@ const CAMERAS = {
   wide: { label: 'Wide 24 mm (1x)', f: 24, px: 8192 },
   tele: { label: 'Medium tele 70 mm (3x)', f: 70, px: 8064 },
 };
-const APP_VERSION = '1.47';
+const APP_VERSION = '1.48';
 const MAX_ALT = 121.92;                          // 400 ft
 const HZ_DEFAULTS = { over: { top: 15.24, buf: 15.24 }, nofly: { top: 0, buf: 10 } };
 const STOP_PENALTY_S = 2.5;                      // time lost decelerating at a stop-and-turn waypoint
@@ -2573,9 +2573,9 @@ function renderMarkerList() {
     return `<div class="mitem${ftSel && ftSel.m.has(m.id) ? ' on' : ''}">${ftSel ? `<input type="checkbox" class="fsel" data-fsel="m:${m.id}"${ftSel.m.has(m.id) ? ' checked' : ''} aria-label="Select">` : ''}<i class="mkdot" style="background:${t.color}">${mkIcon(m.type, 14)}</i><div style="flex:1;min-width:0"><b>${esc(m.name || t.label)}</b><small>${t.label} · ${fmtDist(hav(here, [m.lat, m.lng]))} from map center${m.photos && m.photos.length ? ' · ' + m.photos.length + ' photo' + (m.photos.length === 1 ? '' : 's') : ''}</small></div>
       ${ftSel ? '' : `<button class="btn small" data-l2="go" data-id="${m.id}">Go to</button><button class="btn small" data-l2="edit" data-id="${m.id}">Edit</button>`}</div>`;
   }).join('') + '</div>';
-  h += `<div class="subrow"><h3 class="subh">Boundaries & lines · ${shapes.length}</h3>${shapes.length ? (ftSel ? `<button class="btn small" data-l2="selalls">${shapes.every(x => ftSel.s.has(x.id)) ? 'None' : 'All'}</button>` : '<button class="btn small" data-l2="selon">Select…</button>') : ''}</div>
+  h += `<div class="subrow"><h3 class="subh">Boundaries, Lines, and Hazards · ${shapes.length}</h3>${shapes.length ? (ftSel ? `<button class="btn small" data-l2="selalls">${shapes.every(x => ftSel.s.has(x.id)) ? 'None' : 'All'}</button>` : '<button class="btn small" data-l2="selon">Select…</button>') : ''}</div>
     <div class="btns" style="margin-bottom:8px"><button class="btn" data-l2="barea">Draw area</button><button class="btn" data-l2="bline">Draw line</button><button class="btn" data-l2="hfind">Find power lines & towers…</button></div>
-    <label class="chk"><input type="checkbox" id="shall"${mkVis.shapes !== false ? ' checked' : ''}>Show boundaries and lines on the map</label>`;
+    <label class="chk"><input type="checkbox" id="shall"${mkVis.shapes !== false ? ' checked' : ''}>Show boundaries, lines, and hazards on the map</label>`;
   if (shapes.length) h += '<div class="mlist">' + shapes.map(s => {
     const t = shType(s);
     return `<div class="mitem${ftSel && ftSel.s.has(s.id) ? ' on' : ''}">${ftSel ? `<input type="checkbox" class="fsel" data-fsel="s:${s.id}"${ftSel.s.has(s.id) ? ' checked' : ''} aria-label="Select">` : ''}<i class="shsw" style="border-color:${t.color};background:${s.kind === 'area' ? t.color + '33' : 'transparent'}${t.dash ? ';border-style:dashed' : ''}"></i><div style="flex:1;min-width:0"><b>${esc(s.name || t.label)}</b><small>${t.label} · ${shSize(s)}${s.hazard === 'over' ? ' · ⚡ fly-over hazard' : s.hazard === 'nofly' ? ' · ⛔ no-fly zone' : ''}</small></div>
@@ -2592,7 +2592,7 @@ function renderMarkerList() {
 let ftSel = null, ftArmed = false;
 function ftBar() {
   const n = ftSel.m.size + ftSel.s.size;
-  const what = [ftSel.m.size ? ftSel.m.size + ' marker' + (ftSel.m.size === 1 ? '' : 's') : '', ftSel.s.size ? ftSel.s.size + (ftSel.s.size === 1 ? ' boundary or line' : ' boundaries & lines') : ''].filter(Boolean).join(' and ');
+  const what = [ftSel.m.size ? ftSel.m.size + ' marker' + (ftSel.m.size === 1 ? '' : 's') : '', ftSel.s.size ? ftSel.s.size + (ftSel.s.size === 1 ? ' boundary, line, or hazard' : ' boundaries, lines, and hazards') : ''].filter(Boolean).join(' and ');
   return `<div class="selbar"><span>${n ? esc(what) + ' selected' : 'Tick the features to delete'}</span><button class="btn small" data-l2="seloff">Cancel</button><button class="btn small danger" data-l2="seldel"${n ? '' : ' disabled'}>${ftArmed ? 'Tap again to delete ' + n : 'Delete ' + (n || '')}</button></div>`;
 }
 function markerListClick(e) {
@@ -2613,7 +2613,7 @@ function markerListClick(e) {
     if (nm) { markers = markers.filter(x => !ftSel.m.has(x.id)); mkSave(); renderMarkers(); }
     if (ns) { shapes = shapes.filter(x => !ftSel.s.has(x.id)); shSave(); renderShapes(); }
     ftSel = null; ftArmed = false; renderMarkerList();
-    toast('Deleted ' + [nm ? nm + ' marker' + (nm === 1 ? '' : 's') : '', ns ? ns + (ns === 1 ? ' boundary or line' : ' boundaries & lines') : ''].filter(Boolean).join(' and '));
+    toast('Deleted ' + [nm ? nm + ' marker' + (nm === 1 ? '' : 's') : '', ns ? ns + (ns === 1 ? ' boundary, line, or hazard' : ' boundaries, lines, and hazards') : ''].filter(Boolean).join(' and '));
     return;
   }
   if (k === 'photos') { phToMarkers(); return; }
@@ -4074,7 +4074,7 @@ function airBlocking() {
    next sync from the device that has the newer change puts it back. Map files, offline areas, settings and the plan on
    screen don't sync. */
 const SY_KINDS = ['markers', 'shapes', 'missions', 'mapdates'];
-const SY_LABEL = { markers: 'markers', shapes: 'boundaries and lines', missions: 'saved missions', mapdates: 'map dates' };
+const SY_LABEL = { markers: 'markers', shapes: 'boundaries, lines, and hazards', missions: 'saved missions', mapdates: 'map dates' };
 const SY_TOMB_DAYS = 400;
 let sy = { busy: false, again: false, manual: false, status: '', cls: '', timer: null, info: null, perm: false, armed: false };
 function syGet(k) { try { return JSON.parse(localStorage.getItem(k)) || {}; } catch (e) { return {}; } }
