@@ -9,6 +9,7 @@ const CAMERAS = {
   tele: { label: 'Medium tele 70 mm (3x)', f: 70, px: 8064 },
 };
 const MAX_ALT = 121.92;                          // 400 ft
+const HZ_DEFAULTS = { over: { top: 15.24, buf: 15.24 }, nofly: { top: 0, buf: 10 } };
 const STOP_PENALTY_S = 2.5;                      // time lost decelerating at a stop-and-turn waypoint
 const native = window.Android || null;
 const PC = !!window.PcHost;
@@ -3054,7 +3055,6 @@ async function phGC() {
    cross a no-fly zone detour around it, surveys skip no-fly zones, and legs over a fly-over hazard climb before it and
    come back down after. Whatever can't be fixed is reported and blocks sending until you confirm.
    Heights compare like for like: ground elevation (USGS) + the hazard's height vs. takeoff ground + the route height. */
-const HZ_DEFAULTS = { over: { top: 15.24, buf: 15.24 }, nofly: { top: 0, buf: 10 } };
 function hzShapes() { return shapes.filter(s => (s.hazard === 'over' || s.hazard === 'nofly') && s.pts && s.pts.length >= (s.kind === 'area' ? 3 : 2)); }
 function hzName(s) { return s.name || shType(s).label; }
 /* Outline of a shape grown by r metres, in a local x/y frame (metres). Areas grow outward; lines become a band. */
@@ -3960,6 +3960,7 @@ if (native && native.listMaps) native.listMaps();
 if (baseLayer === 'usgs') probeUsgs();
 syBoot();
 hzSig = hzSignature();
+window.__booted = true;
 (function () { // splash: fade out once the planner has drawn
   const sp = document.getElementById('splash'); if (!sp || window.__noSplash) { if (sp) sp.remove(); showNotice(); return; }
   setTimeout(() => { sp.classList.add('hide'); setTimeout(() => { sp.remove(); showNotice(); }, 450); }, 900);

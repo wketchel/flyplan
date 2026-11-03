@@ -46,6 +46,22 @@
 </div>
 <div id="sheet" class="sheet" hidden></div>
 <div id="photoview" class="photoview" hidden></div>
+<script>
+/* Safety net: if startup fails, never leave the user stuck on the splash screen. */
+(function () {
+  var shown = false;
+  function bail(msg) {
+    var sp = document.getElementById('splash'); if (sp) sp.remove();
+    if (shown || !msg) return; shown = true;
+    var d = document.createElement('div');
+    d.style.cssText = 'position:fixed;left:12px;right:12px;bottom:12px;z-index:9999;background:#c92a2a;color:#fff;padding:12px 14px;border-radius:10px;font:14px/1.4 system-ui,sans-serif';
+    d.textContent = 'FlyPlan hit a problem while starting: ' + msg + '. Please report this. Your data is safe.';
+    document.body.appendChild(d);
+  }
+  window.addEventListener('error', function (e) { if (!window.__booted) bail(e.message || 'unknown error'); });
+  setTimeout(function () { if (!window.__booted) bail(''); }, 10000);
+})();
+</script>
 <script src="leaflet.js"></script>
 <script src="app.js"></script>
 </body>
