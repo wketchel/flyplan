@@ -8,7 +8,7 @@ const CAMERAS = {
   wide: { label: 'Wide 24 mm (1x)', f: 24, px: 8192 },
   tele: { label: 'Medium tele 70 mm (3x)', f: 70, px: 8064 },
 };
-const APP_VERSION = '1.48';
+const APP_VERSION = '1.49';
 const MAX_ALT = 121.92;                          // 400 ft
 const HZ_DEFAULTS = { over: { top: 15.24, buf: 15.24 }, nofly: { top: 0, buf: 10 } };
 const STOP_PENALTY_S = 2.5;                      // time lost decelerating at a stop-and-turn waypoint
@@ -1238,18 +1238,22 @@ function renderPanel() {
   h += '</div>';
 
   // Footer
-  h += `<div class="pfoot"><div class="stats">
+  const nBad = st.warns.filter(w => w[0] === 'bad').length, nWarn = st.warns.filter(w => w[0] !== 'info').length;
+  h += `<div class="pfoot${footMin ? ' min' : ''}"><button class="foottog" data-act="foot" aria-expanded="${!footMin}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="${footMin ? 'M6 15l6-6 6 6' : 'M6 9l6 6 6-6'}"/></svg>
+      ${footMin ? `<span class="footline">${fmtDist(st.dist)} · ${fmtTime(st.time)} · ${st.photos} photos · ${st.points} pts</span>${nWarn ? `<span class="footbadge${nBad ? ' bad' : ''}">⚠ ${nWarn}</span>` : ''}` : '<span class="footline">Hide summary</span>'}</button>
+    ${footMin ? '' : `<div class="stats">
       <div class="stat"><small>Distance</small><b>${fmtDist(st.dist)}</b></div>
       <div class="stat"><small>Time</small><b>${fmtTime(st.time)}</b></div>
       <div class="stat"><small>Photos</small><b>${st.photos}</b></div>
       <div class="stat"><small>Points</small><b>${st.points}</b></div></div>
-    ${st.warns.length ? `<div class="warns">${st.warns.map(([c, t]) => `<div class="warn ${c}">${c === 'info' ? '▲' : '⚠'} ${t}</div>`).join('')}</div>` : ''}
+    ${st.warns.length ? `<div class="warns">${st.warns.map(([c, t]) => `<div class="warn ${c}">${c === 'info' ? '▲' : '⚠'} ${t}</div>`).join('')}</div>` : ''}`}
     <div class="btns"><button class="btn" data-act="save"${st.points < 2 ? ' disabled' : ''}>Save KMZ</button>
     <button class="btn primary" data-act="send"${st.points < 2 ? ' disabled' : ''}>Send to controller</button></div></div>`;
   panel.innerHTML = h;
   const pb = panel.querySelector('.pbody'); if (pb) pb.scrollTop = keepScroll;
 }
 let segArmed = -1;
+let footMin = (() => { try { return localStorage.getItem('planner.footMin') === '1'; } catch (e) { return false; } })();
 function segPanel(st) {
   if (!multi()) {
     if (!S.wps.length && !S.shape) return '';
@@ -1348,6 +1352,7 @@ panel.addEventListener('click', e => {
   const a = e.target.closest('[data-act]'); if (!a || a.disabled) return;
   const act = a.dataset.act, si = Number(a.dataset.i);
   if (act !== 'segdel') segArmed = -1;
+  if (act === 'foot') { footMin = !footMin; try { localStorage.setItem('planner.footMin', footMin ? '1' : ''); } catch (e) {} renderPanel(); return; }
   if (airAct(act, a)) return;
   if (act === 'hfind') { openFindHazards(); return; }
   if (act === 'segadd') { segAdd(); return; }
@@ -3506,7 +3511,9 @@ function hzApply(P) {
   let e0 = 0, ground = () => 0;
   if (P.terrainState === 'ok' && P.terrainInfo) { e0 = P.terrainInfo.e0; ground = (lat, lng) => elevAt(lat, lng); }
   else {
-    const tk = (S.terrain && S.terrain.takeoff) || S.home || pts[0];
+    // Heights are measured from takeoff: the set takeoff spot, else where you are if you're near the mission, else its first point.
+    const near = S.home && pts.some(p => hav(p, S.home) < 1500);
+    const tk = (S.terrain && S.terrain.takeoff) || (near ? S.home : pts[0]);
     const all = pts.concat([tk], ...list.map(s => s.pts));
     const st = demEnsure(Math.min(...all.map(p => p[0])), Math.min(...all.map(p => p[1])), Math.max(...all.map(p => p[0])), Math.max(...all.map(p => p[1])));
     if (st === 'ok') { e0 = elevAt(tk[0], tk[1]); ground = (lat, lng) => elevAt(lat, lng); }
