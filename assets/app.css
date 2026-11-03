@@ -275,3 +275,13 @@ select option:disabled { color: var(--muted); }
 #dropzone svg { width: 34px; height: 34px; color: var(--accent); }
 #dropzone small { color: var(--muted); font-size: 13px; }
 .phdrop{font-size:10px;font-weight:500;color:var(--muted)}
+.warn.info{color:var(--accent)}
+.hzclimb{display:inline-block;white-space:nowrap;background:#ffd43b;color:#1a1a1a;font:700 12px/22px var(--font);padding:0 8px;border-radius:11px;box-shadow:0 1px 4px rgba(0,0,0,.5)}
+.hzprofwrap{margin:4px 0 10px}
+.hzprof{width:100%;height:auto;display:block;background:rgba(127,127,127,.08);border-radius:8px}
+.hzprof text{font:10px var(--font);fill:var(--muted)}
+.hzprof .gl{stroke:var(--line);stroke-width:1}
+.hzprof .fl{fill:none;stroke:#ff7a2e;stroke-width:2.5;stroke-linejoin:round}
+.hzprof .hzbar{fill:#e03131;opacity:.85}
+.hzprof .need{stroke:#ffd43b;stroke-width:2;stroke-dasharray:3 3}
+.hzprofwrap small{display:block;font-size:11px;color:var(--muted);margin-top:3px}

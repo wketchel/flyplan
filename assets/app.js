@@ -940,6 +940,10 @@ function renderMap() {
   if (W.length > 1) L.polyline(W.map(w => [w.lat, w.lng]), { color: multi() ? SEG_COLORS[S.seg % SEG_COLORS.length] : '#ff7a2e', weight: 3, opacity: 0.95 }).addTo(routeLayer);
   const hzmp = hzShapes().length ? missionPoints() : null, hz = hzmp && hzmp.hazard;
   if (hz && (hz.detours || hz.climbs.length)) L.polyline(hzmp.map(p => [p.w.lat, p.w.lng]), { color: '#ffffff', weight: 2, dashArray: '2 6', opacity: 0.9, interactive: false }).addTo(routeLayer);
+  if (hz) hz.spots.forEach(c => {
+    L.polyline([c.a, c.b], { color: '#ffd43b', weight: 10, opacity: 0.45, lineCap: 'butt', interactive: false }).addTo(routeLayer);
+    L.marker(c.at, { interactive: false, zIndexOffset: 1800, icon: L.divIcon({ className: '', html: `<div style="text-align:center"><span class="hzclimb">▲ ${fmtLen(c.to)} over ${esc(c.name)}</span></div>`, iconSize: [220, 22], iconAnchor: [110, 32] }) }).addTo(routeLayer);
+  });
   if (hz) hz.problems.forEach(p => L.marker(p.at, { interactive: false, zIndexOffset: 2000, icon: L.divIcon({ className: '', html: '<div class="hzbad">!</div>', iconSize: [26, 26], iconAnchor: [13, 13] }) }).addTo(routeLayer));
   const rg = intervalRange();
   if (rg && !usesPhotoPoints()) L.polyline(W.slice(rg[0], rg[1] + 1).map(w => [w.lat, w.lng]), { color: '#ffd43b', weight: 2, dashArray: '2 8', opacity: 0.9, interactive: false }).addTo(routeLayer);
@@ -1121,7 +1125,7 @@ function renderPanel() {
       ${check('Climb over fly-over hazards (power lines, towers…)', 'hzClimb')}
       ${check('Route around no-fly zones (surveys skip them)', 'hzAvoid')}
       <div class="row">${field('Clearance above hazards', 'hzMargin', 'len')}<div></div></div>
-      ${sum ? `<p class="note"><b>${sum}.</b></p>` : (S.wps.length || multi()) && !np ? '<p class="note">The route stays clear of every hazard.</p>' : ''}
+      ${sum ? `<p class="note"><b>${sum}.</b></p>${hzProfile(mp)}` : (S.wps.length || multi()) && !np ? '<p class="note">The route stays clear of every hazard.</p>' : ''}
       ${np ? `<div class="warn bad">⚠ ${np} hazard problem${np === 1 ? '' : 's'}. See the warnings below.</div>` : ''}
       <p class="note">Mark hazards by editing a boundary or line in Features. Wires are hard for the drone's sensors to see, so plan the clearance here rather than relying on obstacle avoidance.</p>
       ${hfButton()}</section>`;
@@ -1230,7 +1234,7 @@ function renderPanel() {
       <div class="stat"><small>Time</small><b>${fmtTime(st.time)}</b></div>
       <div class="stat"><small>Photos</small><b>${st.photos}</b></div>
       <div class="stat"><small>Points</small><b>${st.points}</b></div></div>
-    ${st.warns.length ? `<div class="warns">${st.warns.map(([c, t]) => `<div class="warn ${c}">⚠ ${t}</div>`).join('')}</div>` : ''}
+    ${st.warns.length ? `<div class="warns">${st.warns.map(([c, t]) => `<div class="warn ${c}">${c === 'info' ? '▲' : '⚠'} ${t}</div>`).join('')}</div>` : ''}
     <div class="btns"><button class="btn" data-act="save"${st.points < 2 ? ' disabled' : ''}>Save KMZ</button>
     <button class="btn primary" data-act="send"${st.points < 2 ? ' disabled' : ''}>Send to controller</button></div></div>`;
   panel.innerHTML = h;
@@ -3142,7 +3146,7 @@ function hzPoint(a, b, A, B, q, pr, h) {
 function hzApply(P) {
   const list = hzShapes();
   if (!list.length || P.length < 2) return P;
-  const info = { detours: 0, climbs: [], problems: [], flat: false, loading: false, high: 0 };
+  const info = { detours: 0, climbs: [], spots: [], problems: [], flat: false, loading: false, high: 0 };
   const pts = P.map(p => [p.w.lat, p.w.lng]);
   const pr = projector(centroid(pts));
   const zones = hzZones(pr, 3);
@@ -3199,6 +3203,7 @@ function hzApply(P) {
         if (dOut >= Lg - 1) b.h = Math.max(hzH(b), need); else res.push(hzPoint(a, b, A, B, at(dOut), pr, need));
         const nm = hzName(who.s), prev = info.climbs.find(c => c.name === nm);
         if (prev) prev.to = Math.max(prev.to, need); else info.climbs.push({ name: nm, to: need });
+        info.spots.push({ name: nm, to: need, from: altIn, top: need - margin, at: pr.ll(at((k1 + k2) / 2 / n * Lg)), a: pr.ll(at(Math.max(0, dIn))), b: pr.ll(at(Math.min(Lg, dOut))) });
         info.high = Math.max(info.high, need);
         changed = true; res.push(b);
       }
@@ -3230,10 +3235,26 @@ function hzApply(P) {
 }
 function hzWarns(mp, warns) {
   const hz = mp && mp.hazard; if (!hz) return;
+  hz.climbs.forEach(c => warns.push(['info', `Climbs to ${fmtLen(c.to)} over ${esc(c.name)}, then back down.`]));
   hz.problems.forEach(p => warns.push(['bad', p.kind === 'low' ? `Route passes too low over ${esc(p.name)} (${fmtLen(p.alt)} vs. ${fmtLen(p.need)} needed). Turn on Climb over hazards or raise the altitude.`
     : p.kind === 'inside' ? `A waypoint is inside no-fly zone ${esc(p.name)}. Move it out.` : `Route enters no-fly zone ${esc(p.name)}. Turn on Route around no-fly zones or change the route.`]));
   if (hz.high > MAX_ALT + 0.5) warns.push(['bad', `Climbing over hazards takes the drone to ${fmtLen(hz.high)} above takeoff, over 400 ft.`]);
   if (hz.flat && !hz.loading) warns.push(['', 'Hazard heights assume flat ground (no elevation data here). Allow extra clearance.']);
+}
+/* Side view of the route: height above takeoff along the way, with the hazards it climbs over. */
+function hzProfile(mp) {
+  const hz = mp && mp.hazard; if (!hz || !hz.spots.length || mp.length < 2) return '';
+  const d = [0]; for (let i = 1; i < mp.length; i++) d.push(d[i - 1] + hav([mp[i - 1].w.lat, mp[i - 1].w.lng], [mp[i].w.lat, mp[i].w.lng]));
+  const total = d[d.length - 1] || 1, H = mp.map(hzH);
+  const along = ll => { let best = Infinity, at = 0; const pr = projector(ll); for (let i = 1; i < mp.length; i++) { const A = pr.xy([mp[i - 1].w.lat, mp[i - 1].w.lng]), B = pr.xy([mp[i].w.lat, mp[i].w.lng]), dx = B[0] - A[0], dy = B[1] - A[1], L2 = dx * dx + dy * dy || 1, f = Math.max(0, Math.min(1, -(A[0] * dx + A[1] * dy) / L2)), x = A[0] + dx * f, y = A[1] + dy * f, r = Math.hypot(x, y); if (r < best) { best = r; at = d[i - 1] + (d[i] - d[i - 1]) * f; } } return at; };
+  const top = Math.max(...H, ...hz.spots.map(c => c.to)) * 1.15 || 1, W = 320, Ht = 110, px = 34, py = 8;
+  const X = v => px + (W - px - 6) * v / total, Y = v => Ht - 18 - (Ht - 18 - py) * Math.max(0, v) / top;
+  let g = `<svg viewBox="0 0 ${W} ${Ht}" class="hzprof" role="img" aria-label="Route height profile">`;
+  [0, top / 2 / 1.15, top / 1.15].forEach(v => { g += `<line x1="${px}" x2="${W - 6}" y1="${Y(v)}" y2="${Y(v)}" class="gl"/><text x="${px - 4}" y="${Y(v) + 3}" text-anchor="end">${r0(toLen(v))}</text>`; });
+  hz.spots.forEach(c => { const x = X(along(c.at)); g += `<rect x="${x - 3}" y="${Y(c.top)}" width="6" height="${Y(0) - Y(c.top)}" class="hzbar"/><line x1="${x - 14}" x2="${x + 14}" y1="${Y(c.to)}" y2="${Y(c.to)}" class="need"/>`; });
+  g += `<polyline points="${mp.map((p, i) => X(d[i]).toFixed(1) + ',' + Y(H[i]).toFixed(1)).join(' ')}" class="fl"/>`;
+  g += `<text x="${px}" y="${Ht - 4}">0</text><text x="${W - 6}" y="${Ht - 4}" text-anchor="end">${fmtDist(total)}</text></svg>`;
+  return `<div class="hzprofwrap">${g}<small>Height above takeoff (${LEN()}) along the route. Red bars are hazards, dashes the height needed to clear them.</small></div>`;
 }
 function hzSummary(mp) {
   const hz = mp && mp.hazard; if (!hz) return '';
