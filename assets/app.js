@@ -8,6 +8,7 @@ const CAMERAS = {
   wide: { label: 'Wide 24 mm (1x)', f: 24, px: 8192 },
   tele: { label: 'Medium tele 70 mm (3x)', f: 70, px: 8064 },
 };
+const APP_VERSION = '1.44';
 const MAX_ALT = 121.92;                          // 400 ft
 const HZ_DEFAULTS = { over: { top: 15.24, buf: 15.24 }, nofly: { top: 0, buf: 10 } };
 const STOP_PENALTY_S = 2.5;                      // time lost decelerating at a stop-and-turn waypoint
@@ -967,6 +968,7 @@ function renderMap() {
 }
 
 /* ---------- toolbar ---------- */
+const LOGO_SVG = '<svg viewBox="0 0 512 512" aria-hidden="true"><defs><linearGradient id="lgbg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1f7a5a"/><stop offset="1" stop-color="#0b3a4a"/></linearGradient></defs><rect width="512" height="512" rx="112" fill="url(#lgbg)"/><path d="M96 420 V236 H156 V420 H216 V236 H276 V420" fill="none" stroke="#fff" stroke-width="30" stroke-linejoin="round" stroke-linecap="round"/><g fill="#ff8a3d" stroke="#fff" stroke-width="8"><circle cx="96" cy="420" r="26"/><circle cx="276" cy="420" r="26"/></g><g transform="translate(366 146) scale(.9)"><path d="M-46 -46 L46 46 M46 -46 L-46 46" stroke="#fff" stroke-width="18" stroke-linecap="round"/><g fill="none" stroke="#ff8a3d" stroke-width="14"><circle cx="-50" cy="-50" r="30"/><circle cx="50" cy="-50" r="30"/><circle cx="-50" cy="50" r="30"/><circle cx="50" cy="50" r="30"/></g><rect x="-24" y="-24" width="48" height="48" rx="12" fill="#fff"/></g></svg>';
 const ICON = {
   sync: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 18a4.5 4.5 0 0 1-.6-9A6 6 0 0 1 18 9.5a4 4 0 0 1-.5 8.5"/><path d="M9.5 13.5a3 3 0 0 1 5.2-1.2M14.8 11v1.6h-1.6M14.5 15.5a3 3 0 0 1-5.2 1.2M9.2 18v-1.6h1.6"/></svg>',
   waypoint: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s-6-5.6-6-11a6 6 0 1 1 12 0c0 5.4-6 11-6 11z"/><circle cx="12" cy="10" r="2.2"/></svg>',
@@ -987,7 +989,7 @@ const ICON = {
 function renderTools() {
   const t = draw && draw.tool;
   const b = (id, label, on, dis) => `<button class="tool${on ? ' on' : ''}" data-tool="${id}"${dis ? ' disabled' : ''}>${ICON[id === 'finish' ? 'check' : id === 'cancel' ? 'x' : id === 'clear' ? 'trash' : id] || ''}<span>${label}</span></button>`;
-  let html = '<div class="toolgroup"><button class="tool hidetools" data-tool="hidetools" aria-label="Hide menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 5l-7 7 7 7"/></svg><span>Hide menu</span></button></div>';
+  let html = '<div class="toolgroup brandrow"><button class="brand" data-tool="about" aria-label="About FlyPlan">' + LOGO_SVG + '<b>FlyPlan</b></button><button class="hidetools" data-tool="hidetools" aria-label="Hide menu" title="Hide menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 5l-7 7 7 7"/></svg></button></div>';
   html += '<div class="toolgroup">' + b('waypoint', 'Waypoint', t === 'waypoint') + b('rect', 'Rectangle', t === 'rect') +
     b('polygon', 'Polygon', t === 'polygon') + b('poi', 'POI orbit', t === 'poi') + '</div>';
   if (t === 'polygon' || t === 'barea' || t === 'bline') html += '<div class="toolgroup">' + b('finish', 'Finish', false, draw.pts.length < (t === 'bline' ? 2 : 3)) + b('undo', 'Undo point', false, !draw.pts.length) + b('cancel', 'Cancel') + '</div>';
@@ -1014,6 +1016,7 @@ document.getElementById('paneltab').addEventListener('click', () => setHidden('p
 document.getElementById('tools').addEventListener('click', e => {
   const btn = e.target.closest('[data-tool]'); if (!btn || btn.disabled) return;
   if (btn.dataset.tool === 'hidetools') { setHidden('tools-hidden', true); return; }
+  if (btn.dataset.tool === 'about') { openAbout(); return; }
   const id = btn.dataset.tool;
   if (['waypoint', 'rect', 'polygon', 'poi'].includes(id)) setTool(draw && draw.tool === id ? null : id);
   else if (id === 'finish') finishPolygon();
@@ -1366,6 +1369,24 @@ function commit(fit) {
   segStore();
   if (multi() && S.split.on) { const n = missionParts().length; if (S.split.sel >= n) S.split.sel = -1; }
   save(); renderMap(); renderPanel(); renderTools(); airSchedule(); }
+
+/* ---------- about ---------- */
+function openAbout() {
+  sheetMode = 'about';
+  sheet.innerHTML = `<div class="card about"><div class="abouthead">${LOGO_SVG}<div><h2>FlyPlan</h2><p class="note" style="margin:0">Mapping &amp; Waypoints · version ${APP_VERSION}${window.WinHost ? ' for Windows' : PC ? ' (browser)' : native ? ' for Android' : ''}</p></div></div>
+    <p class="note">Plans waypoint and mapping missions for the DJI Air 3S and sends them to DJI Fly. Free for personal and other noncommercial use under the PolyForm Noncommercial license.</p>
+    <p class="note">Copyright © 2026 William Ketchel. Not made by or affiliated with DJI. Always check airspace, TFRs and your surroundings before you fly.</p>
+    <div class="btns"><button class="btn" data-ab="gh">Updates & source</button><button class="btn primary" data-ab="close">Close</button></div></div>`;
+  sheet.hidden = false;
+  if (!openAbout.wired) { openAbout.wired = true; sheet.addEventListener('click', aboutClick, true); }
+}
+function aboutClick(e) {
+  if (sheetMode !== 'about') return;
+  e.stopPropagation();
+  const b = e.target.closest('[data-ab]');
+  if (e.target === sheet || (b && b.dataset.ab === 'close')) { sheet.hidden = true; sheetMode = 'send'; }
+  else if (b && b.dataset.ab === 'gh') openUrl('https://github.com/wketchel/flyplan/releases');
+}
 
 /* ---------- toast ---------- */
 let toastT = null;
