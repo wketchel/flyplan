@@ -8,7 +8,7 @@ const CAMERAS = {
   wide: { label: 'Wide 24 mm (1x)', f: 24, px: 8192 },
   tele: { label: 'Medium tele 70 mm (3x)', f: 70, px: 8064 },
 };
-const APP_VERSION = '1.44';
+const APP_VERSION = '1.45';
 const MAX_ALT = 121.92;                          // 400 ft
 const HZ_DEFAULTS = { over: { top: 15.24, buf: 15.24 }, nofly: { top: 0, buf: 10 } };
 const STOP_PENALTY_S = 2.5;                      // time lost decelerating at a stop-and-turn waypoint
@@ -28,7 +28,7 @@ const DEFAULTS = {
   interval: { on: false, type: 'time', auto: false, value: 3, from: 0, to: -1, method: 'camera' },
   poi: { radius: 30, points: 12, height: 0, cw: true, start: 180, gimbalAuto: true, gimbal: -30, loop: true, rings: 1, altStep: 15.24, radStep: 0, climb: 'step' },
   shape: null, poiCenter: null, mode: 'waypoint', wps: [], sel: -1, libId: null,
-  droneEnum: null, droneSub: null, home: null, segs: [], seg: 0, hzClimb: true, hzAvoid: true, hzMargin: 10,
+  droneEnum: null, droneSub: null, home: null, segs: [], seg: 0, hzClimb: true, hzAvoid: true, hzMargin: 10, skip: [], skipOverlap: 30,
   view: { c: [39.5, -98.35], z: 4 },
 };
 
@@ -174,7 +174,7 @@ function regen() {
   if (S.mode === 'grid' && S.shape && S.shape.pts.length >= 3) {
     const cov = coverage();
     const pr = projector(centroid(S.shape.pts));
-    const P = S.shape.pts.map(pr.xy), holes = hzSurveyHoles(pr);
+    const P = S.shape.pts.map(pr.xy), skipH = skipHoles(pr, P), holes = hzSurveyHoles(pr).concat(skipH);
     let ang;
     if (S.dir === 'auto') {
       let best = Infinity;
@@ -202,7 +202,7 @@ function regen() {
     }
     if (S.reverse) pts = pts.slice().reverse();
     S.wps = pts.map((q, i) => newWp(pr.ll(q), { gimbal: i === 0 ? S.gridGimbal : null }));
-    gridInfo = { angle: ang, lines: res.lines, area: polyArea(P), full: S.wps.map(w => [w.lat, w.lng]), parts: [], holes: holes.filter(H => H.some(q => hzInside(q, P)) || P.some(q => hzInside(q, H))).length };
+    gridInfo = { angle: ang, lines: res.lines, area: polyArea(P), full: S.wps.map(w => [w.lat, w.lng]), parts: [], holes: holes.slice(0, holes.length - skipH.length).filter(H => H.some(q => hzInside(q, P)) || P.some(q => hzInside(q, H))).length, skipped: skipArea(P, skipH), skipRings: skipH.map(H => H.map(pr.ll)) };
     S.interval.from = 0; S.interval.to = -1;
     if (S.split && S.split.on && !multi()) {
       gridInfo.parts = computeParts(S.wps);
@@ -928,6 +928,7 @@ function renderMap() {
     const tm = L.marker(S.terrain.takeoff, { draggable: !featuresLocked(), interactive: !featuresLocked(), zIndexOffset: 1500, icon: L.divIcon({ className: '', html: '<div class="tkm">T</div>', iconSize: [30, 30], iconAnchor: [15, 15] }) }).addTo(routeLayer);
     tm.on('dragend', e => { S.terrain.takeoff = [e.target.getLatLng().lat, e.target.getLatLng().lng]; commit(false); });
   }
+  if (S.mode === 'grid' && gridInfo && gridInfo.skipRings) gridInfo.skipRings.forEach(R => L.polygon(R, { color: '#ced4da', weight: 1.5, dashArray: '3 5', fillColor: '#000', fillOpacity: 0.18, interactive: false }).addTo(shapeLayer));
   if (S.mode === 'grid' && gridInfo && S.split && S.split.on && S.split.sel >= 0) L.polyline(gridInfo.full, { color: '#ffffff', weight: 1.5, opacity: 0.45, interactive: false }).addTo(routeLayer);
   if (multi()) segStore(), S.segs.forEach((sg, i) => {
     const col = SEG_COLORS[i % SEG_COLORS.length], pts = (sg.wps || []).map(w => [w.lat, w.lng]), nx = S.segs[i + 1];
@@ -1157,7 +1158,9 @@ function renderPanel() {
         <span>Photo footprint</span><b>${fmtLen(cov.across)} × ${fmtLen(cov.along)}</b>
         <span>Ground resolution</span><b>${imp() ? (Math.round(cov.gsd / 2.54 * 100) / 100) + ' in/px' : r1(cov.gsd) + ' cm/px'}</b>
         <span>Area</span><b>${gridInfo ? (imp() ? r1(gridInfo.area / 4046.86) + ' acres' : r1(gridInfo.area / 10000) + ' ha') : '—'}</b>
+        ${gridInfo && gridInfo.skipped ? `<span>Left out (already mapped)</span><b>${imp() ? r1(gridInfo.skipped / 4046.86) + ' acres' : r1(gridInfo.skipped / 10000) + ' ha'}</b>` : ''}
       </div>
+      ${skipPanel()}
       <div class="btns"><button class="btn small primary" data-act="goal">Plan by goal…</button><button class="btn small" data-act="reverse">Reverse route</button></div>
     </section>
     ${multi() ? '' : `<section class="grp"><h3>Split into parts</h3>
@@ -1278,11 +1281,12 @@ function segPanel(st) {
 }
 function scrollToWp(i) { setTimeout(() => { const e = document.getElementById('wp' + i); if (e) e.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }, 30); }
 
-const REGEN_KEYS = /^(hzAvoid|alt|speed|camera|front|side|spacing|spacingAuto|dir|angle|gridGimbal|runIn|pathStyle|split\.|interval\.|poi\.)/;
+const REGEN_KEYS = /^(skipOverlap|hzAvoid|alt|speed|camera|front|side|spacing|spacingAuto|dir|angle|gridGimbal|runIn|pathStyle|split\.|interval\.|poi\.)/;
 panel.addEventListener('input', e => {
   const t = e.target; if (t.dataset.k === 'range') t.nextElementSibling.textContent = t.value + '°';
 });
 panel.addEventListener('change', e => {
+  if (e.target.dataset.skip != null) { skipToggle(e.target.dataset.skip, e.target.checked); return; }
   const t = e.target, path = t.dataset.f; if (!path) return;
   const k = t.dataset.k;
   let v;
@@ -1304,6 +1308,7 @@ panel.addEventListener('change', e => {
     if (k === 'pct') v = Math.min(95, Math.max(0, v));
     if (path === 'spacing') v = Math.max(1, v);
     if (path === 'runIn') v = Math.min(100, Math.max(0, v));
+    if (path === 'skipOverlap') v = Math.min(300, Math.max(0, v));
     if (path === 'terrain.tol') v = Math.min(30, Math.max(1, v));
     if (path === 'split.minutes') v = Math.min(40, Math.max(3, Math.round(v)));
     if (path === 'split.points') v = Math.min(500, Math.max(20, Math.round(v)));
@@ -2439,6 +2444,8 @@ function covLoops(t, z, minCells) {
 }
 function covDraw() {
   covLayer.clearLayers();
+  // Trace every map once (also needed to leave mapped areas out of surveys), even with outlines hidden.
+  myMaps.forEach(m => { const c = covCache[m.id]; if (!m.missing && !m.locked && (!c || c.size !== m.size || c.v !== COV_V) && !covAsked[m.id] && native && native.mapCoverage) { covAsked[m.id] = 1; native.mapCoverage(m.id, covZoom(m)); } });
   if (!covOn()) return;
   myMaps.forEach(m => {
     if (m.missing || m.locked || !myState(m.id).on) return;
@@ -3322,6 +3329,111 @@ function hzZones(pr, extra) {
   });
 }
 /* Survey holes: no-fly zones the grid lines should stop at (in the survey's own frame). */
+/* ---------- leave out areas already mapped ----------
+   The user picks basemaps (My maps) whose imagery already covers part of the survey. Their traced outlines, pulled in
+   by an overlap distance so the new map still overlaps the old one for stitching, become holes the survey lines stop
+   at. The outlines are copied into the mission so it works on a device that doesn't have the map. */
+function skipKey(m) { return mapKey(m); }
+function skipCandidates() {
+  const P = S.shape && S.shape.pts && S.shape.pts.length >= 3 ? S.shape.pts : null; if (!P) return [];
+  const out = [], seen = {};
+  myMaps.forEach(m => {
+    const c = covCache[m.id]; if (!c || c.v !== COV_V || !c.loops.length) return;
+    const pr = projector(centroid(P)), Px = P.map(pr.xy);
+    const hit = c.loops.some(lp => lp.some(q => hzInside(pr.xy(q), Px)) || P.some(q => hzInside(q, lp)));
+    if (!hit) return;
+    const k = skipKey(m); seen[k] = 1;
+    out.push({ key: k, name: mapTitle(m), date: mapDate(m).date, color: mapColor(m), m });
+  });
+  (S.skip || []).forEach(sk => { if (!seen[sk.key]) out.push({ key: sk.key, name: sk.name, date: sk.date, color: '#adb5bd', saved: true }); });
+  return out.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+}
+function skipToggle(key, on) {
+  S.skip = (S.skip || []).filter(x => x.key !== key);
+  if (on) {
+    const c = skipCandidates().find(x => x.key === key); if (!c || !c.m) return renderPanel();
+    const loops = covCache[c.m.id].loops.map(lp => covSimplify(lp, 2.5));
+    S.skip.push({ key, name: c.name, date: c.date, loops });
+  }
+  regen(); commit(false);
+}
+function skipPanel() {
+  const cands = skipCandidates();
+  if (!cands.length) return '';
+  const on = new Set((S.skip || []).map(x => x.key));
+  return `<h3 class="subh">Leave out areas already mapped</h3>
+    <p class="note" style="margin-top:-4px">Lines stop short of the imagery you pick, keeping an overlap with it so the new map lines up with the old one.</p>
+    ${cands.map(c => `<label class="chk"><input type="checkbox" data-skip="${esc(c.key)}"${on.has(c.key) ? ' checked' : ''}><i class="covsw" style="border-color:${c.color};margin-right:2px"></i>${esc(c.name)} · ${esc(fmtMapDate(c.date))}${c.saved ? ' <small class="note">(map not on this device)</small>' : ''}</label>`).join('')}
+    ${on.size ? `<div class="row">${field('Overlap into mapped area', 'skipOverlap', 'len')}<div></div></div>` : ''}`;
+}
+/* Holes (in the survey's x/y frame) for the picked maps, shrunk by the overlap. Cached per outline and overlap. */
+const skipCache = {};
+function skipHoles(pr, P) {
+  const list = S.skip || []; if (!list.length) return [];
+  const ov = Math.max(0, S.skipOverlap != null ? S.skipOverlap : 30), out = [];
+  list.forEach(sk => {
+    const ck = sk.key + '|' + ov + '|' + sk.loops.length + '|' + (sk.loops[0] || []).length + '|' + JSON.stringify(sk.loops[0] && sk.loops[0][0]);
+    if (!skipCache[ck]) skipCache[ck] = skipErode(sk.loops, ov);
+    skipCache[ck].forEach(ring => out.push(ring.map(pr.xy)));
+  });
+  return out;
+}
+/* Shrinks the area inside the loops by r metres (on a fine grid), returning [lat, lng] outer rings. */
+function skipErode(loops, r) {
+  const all = [].concat(...loops); if (all.length < 3) return [];
+  const pr = projector(centroid(all)), L2 = loops.map(lp => lp.map(pr.xy));
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  L2.forEach(lp => lp.forEach(([x, y]) => { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }));
+  const c = Math.max(1.5, Math.min(Math.max(r / 4, 1.5), Math.max(x1 - x0, y1 - y0) / 500));
+  const W = Math.ceil((x1 - x0) / c) + 2, H = Math.ceil((y1 - y0) / c) + 2, g = new Uint8Array(W * H);
+  // scanline fill (even-odd over all loops)
+  for (let j = 0; j < H; j++) {
+    const y = y0 + (j - 0.5) * c, xs = [];
+    L2.forEach(lp => { for (let k = 0; k < lp.length; k++) { const a = lp[k], b = lp[(k + 1) % lp.length]; if ((a[1] <= y && b[1] > y) || (b[1] <= y && a[1] > y)) xs.push(a[0] + (y - a[1]) * (b[0] - a[0]) / (b[1] - a[1])); } });
+    xs.sort((a, b) => a - b);
+    for (let k = 0; k + 1 < xs.length; k += 2) { const i0 = Math.max(0, Math.ceil((xs[k] - x0) / c + 0.5)), i1 = Math.min(W - 1, Math.floor((xs[k + 1] - x0) / c + 0.5)); for (let i = i0; i <= i1; i++) g[j * W + i] = 1; }
+  }
+  // distance to the nearest outside cell (chamfer 3-4), in cells
+  const D = new Float32Array(W * H), BIG = 1e9;
+  for (let k = 0; k < W * H; k++) D[k] = g[k] ? BIG : 0;
+  const rel = (k, k2, w) => { if (D[k2] + w < D[k]) D[k] = D[k2] + w; };
+  for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) { const k = j * W + i; if (!D[k]) continue; if (i > 0) rel(k, k - 1, 1); if (j > 0) { rel(k, k - W, 1); if (i > 0) rel(k, k - W - 1, 1.4142); if (i < W - 1) rel(k, k - W + 1, 1.4142); } }
+  for (let j = H - 1; j >= 0; j--) for (let i = W - 1; i >= 0; i--) { const k = j * W + i; if (!D[k]) continue; if (i < W - 1) rel(k, k + 1, 1); if (j < H - 1) { rel(k, k + W, 1); if (i < W - 1) rel(k, k + W + 1, 1.4142); if (i > 0) rel(k, k + W - 1, 1.4142); } }
+  const keep = new Uint8Array(W * H); let any = 0;
+  for (let k = 0; k < W * H; k++) if (D[k] * c > r) { keep[k] = 1; any++; }
+  if (!any) return [];
+  // trace outer boundaries of the kept cells
+  const V = (i, j) => j * (W + 1) + i, out = new Map(); let ne = 0;
+  const edge = (a, b) => { (out.get(a) || out.set(a, []).get(a)).push(b); ne++; };
+  for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
+    if (!keep[j * W + i]) continue;
+    if (j === 0 || !keep[(j - 1) * W + i]) edge(V(i, j), V(i + 1, j));
+    if (i === W - 1 || !keep[j * W + i + 1]) edge(V(i + 1, j), V(i + 1, j + 1));
+    if (j === H - 1 || !keep[(j + 1) * W + i]) edge(V(i + 1, j + 1), V(i, j + 1));
+    if (i === 0 || !keep[j * W + i - 1]) edge(V(i, j + 1), V(i, j));
+  }
+  const rings = [];
+  while (ne > 0) {
+    const v0 = out.keys().next().value; let v = v0; const pts = [];
+    for (let guard = 0; guard < 4e6; guard++) {
+      pts.push(v); const L3 = out.get(v); if (!L3 || !L3.length) break;
+      const nv = L3.pop(); if (!L3.length) out.delete(v); ne--; v = nv; if (v === v0) break;
+    }
+    const xy = pts.map(q => [x0 + (q % (W + 1)) * c, y0 + Math.floor(q / (W + 1)) * c]);
+    let a = 0; for (let k = 0; k < xy.length; k++) { const p = xy[k], q = xy[(k + 1) % xy.length]; a += p[0] * q[1] - q[0] * p[1]; }
+    if (a > 0 && a / 2 > 4 * c * c) rings.push(covSimplify(xy.map(pr.ll), c * 0.75));   // outer rings only (holes in the old map get surveyed)
+  }
+  return rings;
+}
+function skipArea(P, holes) {
+  if (!holes.length) return 0;
+  // area of the survey that falls inside the holes, by sampling a grid
+  let a = 0, x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  P.forEach(([x, y]) => { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); });
+  const st = Math.max(2, Math.max(x1 - x0, y1 - y0) / 150);
+  for (let x = x0 + st / 2; x < x1; x += st) for (let y = y0 + st / 2; y < y1; y += st) if (hzInside([x, y], P) && holes.some(H => hzInside([x, y], H))) a += st * st;
+  return a;
+}
 function hzSurveyHoles(pr) { return S.hzAvoid === false ? [] : hzZones(pr, 4).filter(z => z.kind === 'nofly').map(z => z.Qx); }
 /* Shortest way around polygon Q between where A→B enters and leaves it; null if A→B doesn't cross it. */
 function hzDetour(A, B, Q) {

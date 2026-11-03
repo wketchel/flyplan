@@ -31,7 +31,7 @@ Get the latest version from **[Releases](../../releases)**:
 - **Send to controller over USB**: replaces a placeholder mission you saved in DJI Fly, after backing it up.
 - **Your own maps**: import an orthomosaic as MBTiles (from WebODM, QGIS and others) as a basemap.
 - **Offline maps** (Android): USGS aerial imagery and terrain for areas with no signal.
-- **Your own basemaps** (MBTiles, for example a WebODM orthophoto): each map gets a colored outline that follows its imagery and a date tag, taken from the file name (for example `north-2026-03-14.mbtiles`) or set by you. Where maps overlap, the newest imagery draws on top.
+- **Your own basemaps** (MBTiles, for example a WebODM orthophoto): each map gets a colored outline that follows its imagery and a date tag, taken from the file name (for example `north-2026-03-14.mbtiles`) or set by you. Where maps overlap, the newest imagery draws on top. A survey can leave out areas a map already covers, keeping an overlap with it for stitching.
 - **Features**: markers (stands, feeders, cameras, gates…), boundaries and lines, photos on features (on PC, drag them in, even straight from Google Photos in your browser), geotagged photos
   to markers, and KML/KMZ/GPX import and export (works with exports from Google Earth, onX, Avenza and others).
 - **Measure** distances, areas and elevation profiles.
