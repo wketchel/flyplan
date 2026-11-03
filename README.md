@@ -26,6 +26,7 @@ Get the latest version from **[Releases](../../releases)**:
 - **Battery-sized parts** (30 minutes by default): parts break between survey lines, never mid-orbit, and stay under DJI's waypoint limit.
 - **Terrain following** from USGS elevation data.
 - **Flight hazards**: mark power lines, towers and trees as fly-over hazards (with a height and keep-away distance) or areas as no-fly zones. Routes climb over hazards and detour around no-fly zones automatically, surveys skip no-fly zones, and anything left over blocks sending until you confirm.
+- **Find power lines & towers**: looks up mapped power lines, towers and wind turbines around a mission in OpenStreetMap and the FAA obstacle file, and adds the ones you pick as hazards. Neither source is complete, so mark anything else yourself.
 - **FAA airspace check**: every mission is checked against the FAA's public UAS data: controlled airspace with LAANC facility-map ceilings, restricted and prohibited areas, military operations areas, national security restrictions and stadiums. One tap opens a LAANC app or FAA DroneZone to request authorization, plus links to current TFRs. Advisory only: the app can't request authorization itself, and you still check TFRs and NOTAMs before each flight.
 - **Send to controller over USB**: replaces a placeholder mission you saved in DJI Fly, after backing it up.
 - **Your own maps**: import an orthomosaic as MBTiles (from WebODM, QGIS and others) as a basemap.

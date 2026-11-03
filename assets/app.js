@@ -1122,7 +1122,10 @@ function renderPanel() {
       <div class="row">${field('Clearance above hazards', 'hzMargin', 'len')}<div></div></div>
       ${sum ? `<p class="note"><b>${sum}.</b></p>` : (S.wps.length || multi()) && !np ? '<p class="note">The route stays clear of every hazard.</p>' : ''}
       ${np ? `<div class="warn bad">⚠ ${np} hazard problem${np === 1 ? '' : 's'}. See the warnings below.</div>` : ''}
-      <p class="note">Mark hazards by editing a boundary or line in Features. Wires are hard for the drone's sensors to see, so plan the clearance here rather than relying on obstacle avoidance.</p></section>`;
+      <p class="note">Mark hazards by editing a boundary or line in Features. Wires are hard for the drone's sensors to see, so plan the clearance here rather than relying on obstacle avoidance.</p>
+      ${hfButton()}</section>`;
+  } else if (st.points >= 2) {
+    h += `<section class="grp"><h3>Hazards</h3><p class="note">No hazards marked. Look up mapped power lines, towers and wind turbines around this mission, or mark them yourself by editing a boundary or line in Features.</p>${hfButton()}</section>`;
   }
   h += airPanel();
 
@@ -1330,6 +1333,7 @@ panel.addEventListener('click', e => {
   const act = a.dataset.act, si = Number(a.dataset.i);
   if (act !== 'segdel') segArmed = -1;
   if (airAct(act, a)) return;
+  if (act === 'hfind') { openFindHazards(); return; }
   if (act === 'segadd') { segAdd(); return; }
   if (act === 'segsel') { if (si !== S.seg) segActivate(si); else fitMission(); return; }
   if (act === 'segup' || act === 'segdown') { segMove(si, act === 'segup' ? -1 : 1); return; }
@@ -1527,6 +1531,7 @@ sheet.addEventListener('click', e => {
   if (sheetMode === 'marker') { markerClick(e); return; }
   if (sheetMode === 'markers') { markerListClick(e); return; }
   if (sheetMode === 'shape') { shapeClick(e); return; }
+  if (sheetMode === 'hfind') { hfClick(e); return; }
   if (sheetMode === 'sync') { syncClick(e); return; }
   if (e.target === sheet) { if (send.step !== 'sending') sheet.hidden = true; return; }
   const r = e.target.closest('input[name=pm]');
@@ -2342,11 +2347,11 @@ function renderMarkerList() {
       <button class="btn small" data-l2="go" data-id="${m.id}">Go to</button><button class="btn small" data-l2="edit" data-id="${m.id}">Edit</button></div>`;
   }).join('') + '</div>';
   h += `<h3 class="subh">Boundaries & lines · ${shapes.length}</h3>
-    <div class="btns" style="margin-bottom:8px"><button class="btn" data-l2="barea">Draw area</button><button class="btn" data-l2="bline">Draw line</button></div>
+    <div class="btns" style="margin-bottom:8px"><button class="btn" data-l2="barea">Draw area</button><button class="btn" data-l2="bline">Draw line</button><button class="btn" data-l2="hfind">Find power lines & towers…</button></div>
     <label class="chk"><input type="checkbox" id="shall"${mkVis.shapes !== false ? ' checked' : ''}>Show boundaries and lines on the map</label>`;
   if (shapes.length) h += '<div class="mlist">' + shapes.map(s => {
     const t = shType(s);
-    return `<div class="mitem"><i class="shsw" style="border-color:${t.color};background:${s.kind === 'area' ? t.color + '33' : 'transparent'}${t.dash ? ';border-style:dashed' : ''}"></i><div style="flex:1;min-width:0"><b>${esc(s.name || t.label)}</b><small>${t.label} · ${shSize(s)}</small></div>
+    return `<div class="mitem"><i class="shsw" style="border-color:${t.color};background:${s.kind === 'area' ? t.color + '33' : 'transparent'}${t.dash ? ';border-style:dashed' : ''}"></i><div style="flex:1;min-width:0"><b>${esc(s.name || t.label)}</b><small>${t.label} · ${shSize(s)}${s.hazard === 'over' ? ' · ⚡ fly-over hazard' : s.hazard === 'nofly' ? ' · ⛔ no-fly zone' : ''}</small></div>
       <button class="btn small" data-l2="sgo" data-id="${s.id}">Go to</button><button class="btn small" data-l2="sedit" data-id="${s.id}">Edit</button></div>`;
   }).join('') + '</div>';
   h += `<h3 class="subh">Share</h3><div class="btns"><button class="btn" data-l2="import">Import KML / KMZ / GPX…</button><button class="btn" data-l2="export"${markers.length || shapes.length ? '' : ' disabled'}>Export KML</button></div>
@@ -2362,6 +2367,7 @@ function markerListClick(e) {
   if (k === 'photos') { phToMarkers(); return; }
   if (k === 'add') { sheet.hidden = true; setTool('marker'); return; }
   if (k === 'barea' || k === 'bline') { sheet.hidden = true; setTool(k); return; }
+  if (k === 'hfind') { openFindHazards(); return; }
   if (k === 'sgo' || k === 'sedit') { const sh = shapes.find(x => x.id === b.dataset.id); if (!sh) return; if (k === 'sedit') { openShapeEditor(sh.id); return; } sheet.hidden = true; map.fitBounds(L.latLngBounds(sh.pts).pad(0.15)); return; }
   if (k === 'here' && S.home) { const nm = addMarker(S.home); openMarker(nm.id, true); return; }
   if (k === 'vis') { const v = b.dataset.v; if (mkVis.hidden[v]) delete mkVis.hidden[v]; else mkVis.hidden[v] = true; mkSaveVis(); renderMarkers(); renderMarkerList(); return; }
@@ -2462,6 +2468,7 @@ const SH_TYPES = {
     sanctuary: { label: 'Sanctuary / no hunting', color: '#fa5252', fill: 0.12, dash: '10 6' },
     water: { label: 'Water', color: '#4dabf7', fill: 0.25 },
     nofly: { label: 'No-fly zone', color: '#e03131', fill: 0.18, dash: '6 5', hz: 'nofly' },
+    tower: { label: 'Tower / obstacle', color: '#ff6b6b', fill: 0.35, hz: 'over' },
     other: { label: 'Other area', color: '#cc5de8', fill: 0.10 },
   },
   line: {
@@ -3190,6 +3197,185 @@ function hzChanged() {
   if (multi()) { segStore(); S.segs.forEach((sg, i) => { if (i !== S.seg && sg.mode === 'grid' && sg.shape) sg.wps = withSeg(sg, () => { regen(); return clone(S.wps); }); }); }
   if (S.mode === 'grid') regen();
   commit(false);
+}
+
+/* ---------- find hazards ----------
+   Looks up power lines, towers and wind turbines around the mission in OpenStreetMap and the FAA
+   Digital Obstacle File, and lets the pilot pick which to add as hazards. Neither source is complete. */
+const HF_OVERPASS = 'https://overpass-api.de/api/interpreter';
+const HF_DOF = 'https://services6.arcgis.com/ssFJjBXIUyZDrSYZ/arcgis/rest/services/Digital_Obstacle_File/FeatureServer/0/query';
+const HF_TOWER_TYPES = /TOWER|TWR|MAST|ANTENNA|STACK|WINDMILL|POLE|CRANE|RIG/;
+var hf = null;
+const hfLayer = L.layerGroup().addTo(map);
+function hfArea() {
+  const P = (S.wps.length || multi()) ? allFlightPoints() : [];
+  let box;
+  if (P.length) {
+    const la = P.map(p => p.w.lat), ln = P.map(p => p.w.lng), padY = 0.005, padX = 0.005 / Math.cos(la[0] * Math.PI / 180);
+    box = [Math.min(...la) - padY, Math.min(...ln) - padX, Math.max(...la) + padY, Math.max(...ln) + padX];
+  } else { const b = map.getBounds(); box = [b.getSouth(), b.getWest(), b.getNorth(), b.getEast()]; }
+  return { box, mission: !!P.length };
+}
+function hfNum(v) { const m = String(v == null ? '' : v).match(/[\d.]+/); if (!m) return null; let n = parseFloat(m[0]); if (/ft|'/.test(String(v))) n /= FT; return n > 0 ? n : null; }
+/* Long lines: keep only the stretches inside the search area (plus one point either side). */
+function hfClip(pts, box) {
+  const m = 0.002, B = [box[0] - m, box[1] - m, box[2] + m, box[3] + m];
+  const inb = p => p[0] >= B[0] && p[0] <= B[2] && p[1] >= B[1] && p[1] <= B[3];
+  const edge = (q, p) => {           // where the segment from inside point q towards p leaves the area
+    let t = 1;
+    [[0, B[0]], [0, B[2]], [1, B[1]], [1, B[3]]].forEach(([k, v]) => { const d = p[k] - q[k]; if (d) { const u = (v - q[k]) / d; if (u > 0 && u < t) t = u; } });
+    return [q[0] + (p[0] - q[0]) * t, q[1] + (p[1] - q[1]) * t];
+  };
+  const runs = []; let cur = [];
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i];
+    if (inb(p)) { if (!cur.length && i > 0) cur.push(edge(p, pts[i - 1])); cur.push(p); }
+    else if (cur.length) { cur.push(edge(cur[cur.length - 1], p)); runs.push(cur); cur = []; }
+    else if (i > 0 && !inb(pts[i - 1])) {   // a span crossing the area with both ends outside
+      const a = pts[i - 1], c = edge([(a[0] + p[0]) / 2, (a[1] + p[1]) / 2], a), d = edge([(a[0] + p[0]) / 2, (a[1] + p[1]) / 2], p), mid = [(a[0] + p[0]) / 2, (a[1] + p[1]) / 2];
+      if (inb(mid)) runs.push([c, d]);
+    }
+  }
+  if (cur.length >= 2) runs.push(cur);
+  return runs.filter(r => r.length >= 2);
+}
+/* How a point obstacle is treated: tall towers (often guyed) are routed around; shorter ones flown over. */
+function hfPointRule(h, tower, turbine, rotor) {
+  if (turbine) return { hazard: 'nofly', top: h, buf: Math.max(60, (rotor || 120) / 2 + 30) };
+  if (tower && h >= 45) return { hazard: 'nofly', top: h, buf: Math.min(150, Math.max(30, h * 0.8)) };
+  return { hazard: 'over', top: h, buf: 15 };
+}
+function hfFromOsm(j, box) {
+  const out = [];
+  (j.elements || []).forEach(e => {
+    const t = e.tags || {};
+    if (e.type === 'way' && /^(line|minor_line)$/.test(t.power) && e.geometry) {
+      const kv = Math.max(0, ...String(t.voltage || '').split(/[;,]/).map(Number).filter(isFinite)) / 1000;
+      const major = t.power === 'line', h = hfNum(t.height) || (major ? (kv >= 100 ? 40 : 25) : 12);
+      const nm = t.name || (major ? 'Transmission line' : 'Power line') + (kv ? ' ' + Math.round(kv) + ' kV' : '');
+      hfClip(e.geometry.map(g => [g.lat, g.lon]), box).forEach((pts, k) => out.push({ id: 'osm:way/' + e.id + '#' + k, src: 'OpenStreetMap', kind: 'line', pts, name: nm, h, est: !hfNum(t.height), hazard: 'over', top: h, buf: major ? 25 : 15, what: 'Power line' }));
+    } else if (e.type === 'node') {
+      const turbine = t.power === 'generator';
+      const rotor = hfNum(t['rotor:diameter']), hub = hfNum(t['hub:height']);
+      const h = hfNum(t.height) || (hub && rotor ? hub + rotor / 2 : null) || (turbine ? 150 : 30);
+      const known = !!(hfNum(t.height) || (hub && rotor));
+      const what = turbine ? 'Wind turbine' : t.man_made === 'mast' || t.man_made === 'communications_tower' ? 'Communication tower' : t.man_made === 'chimney' ? 'Chimney' : 'Tower';
+      out.push(Object.assign({ id: 'osm:node/' + e.id, src: 'OpenStreetMap', kind: 'pt', pt: [e.lat, e.lon], name: t.name || t.operator || what, h, est: !known, what }, hfPointRule(h, !turbine, turbine, rotor)));
+    }
+  });
+  return out;
+}
+function hfFromDof(j) {
+  return (j.features || []).map(f => {
+    const a = f.properties || {}, g = f.geometry, ty = String(a.Type_Code || '').trim(), h = (Number(a.AGL) || 0) / FT;
+    if (!g || g.type !== 'Point' || !h) return null;
+    const turbine = /WIND/.test(ty), tower = HF_TOWER_TYPES.test(ty);
+    const NAMES = { BLDG: 'Building', 'T-L TWR': 'Power line tower', 'TOWER': 'Tower', 'ANTENNA': 'Antenna', 'STACK': 'Smokestack', 'WINDMILL': 'Wind turbine', 'POLE': 'Pole', 'TANK': 'Tank', 'ELEVATOR': 'Grain elevator', 'SILO': 'Silo', 'BLDG-TWR': 'Building tower', 'CTRL TWR': 'Control tower', 'RIG': 'Rig', 'CRANE': 'Crane', 'LGTHOUSE': 'Lighthouse', 'MET': 'Weather tower', 'UTILITY POLE': 'Utility pole' };
+    const what = NAMES[ty] || ty.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+    return Object.assign({ id: 'faa:' + a.OAS_Number, src: 'FAA obstacle file', kind: 'pt', pt: [g.coordinates[1], g.coordinates[0]], name: what + (a.City ? ' (' + String(a.City).trim().toLowerCase().replace(/\b\w/g, c => c.toUpperCase()) + ')' : ''), h, est: false, what, lit: a.Lighting && a.Lighting !== 'N' && a.Lighting !== 'U' }, hfPointRule(h, tower, turbine, null));
+  }).filter(Boolean);
+}
+/* Same tower in both sources: keep the FAA height, the OSM name. */
+function hfMerge(osm, dof) {
+  const out = dof.slice();
+  osm.forEach(o => {
+    if (o.kind === 'pt') { const d = out.find(x => x.kind === 'pt' && x.src === 'FAA obstacle file' && hav(x.pt, o.pt) < 80); if (d) { d.id2 = o.id; if (o.name !== o.what) d.name = o.name; d.src = 'FAA + OpenStreetMap'; return; } }
+    out.push(o);
+  });
+  const have = new Set(shapes.map(s => s.src).filter(Boolean));
+  out.forEach(it => { it.dup = have.has(it.id) || (it.id2 && have.has(it.id2)); it.on = !it.dup; });
+  return out.sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'line' ? -1 : 1) || b.h - a.h);
+}
+function hfButton() {
+  const n = hf && hf.state === 'done' ? hf.items.filter(i => !i.dup).length : 0;
+  return `<div class="btns"><button class="btn small${n ? ' primary' : ''}" data-act="hfind">${n ? 'Review found hazards (' + n + ')' : 'Find power lines & towers…'}</button></div>`;
+}
+function openFindHazards() {
+  sheetMode = 'hfind';
+  if (hf && hf.state !== 'error' && hf.state !== 'big') { renderHf(); sheet.hidden = false; return; }
+  const a = hfArea();
+  hf = { state: 'loading', box: a.box, mission: a.mission, items: [], osm: '', faa: '' };
+  sheet.hidden = false;
+  if (a.box[2] - a.box[0] > 0.3 || a.box[3] - a.box[1] > 0.35) { hf.state = 'big'; renderHf(); return; }
+  renderHf(); hfFetch();
+}
+function hfFetch() {
+  const b = hf.box, bb = b.map(v => v.toFixed(5)).join(','), me = hf;
+  const q = `[out:json][timeout:25];(way["power"~"^(line|minor_line)$"](${bb});node["man_made"~"^(mast|tower|communications_tower|chimney)$"](${bb});node["power"="generator"]["generator:source"="wind"](${bb}););out geom tags;`;
+  const osm = fetch(HF_OVERPASS, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'data=' + encodeURIComponent(q) }).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
+  const dof = fetch(HF_DOF + '?where=1%3D1&geometry=' + [b[1], b[0], b[3], b[2]].map(v => v.toFixed(5)).join(',') + '&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=OAS_Number,City,Type_Code,AGL,Lighting&returnGeometry=true&outSR=4326&resultRecordCount=2000&f=geojson').then(r => r.json()).then(j => { if (j.error) throw new Error(j.error.message); return j; });
+  Promise.allSettled([osm, dof]).then(([o, d]) => {
+    if (hf !== me) return;
+    const A = o.status === 'fulfilled' ? hfFromOsm(o.value, b) : [], B = d.status === 'fulfilled' ? hfFromDof(d.value) : [];
+    me.osm = o.status === 'fulfilled' ? '' : 'couldn\'t reach'; me.faa = d.status === 'fulfilled' ? '' : 'couldn\'t reach';
+    if (me.osm && me.faa) { me.state = 'error'; }
+    else { me.items = hfMerge(A, B); me.state = 'done'; me.nOsm = A.length; me.nFaa = B.length; }
+    hfDraw(); if (sheetMode === 'hfind' && !sheet.hidden) renderHf();
+    if (sheet.hidden && me.state === 'done') renderPanel();
+  });
+}
+function hfDraw() {
+  hfLayer.clearLayers();
+  if (!hf || hf.state !== 'done') return;
+  hf.items.forEach(it => {
+    const col = it.dup ? '#adb5bd' : it.on ? '#fcc419' : '#868e96';
+    if (it.kind === 'line') L.polyline(it.pts, { color: col, weight: 4, dashArray: '2 7', opacity: 0.95, interactive: false }).addTo(hfLayer);
+    else L.circleMarker(it.pt, { radius: 7, color: '#000', weight: 1.5, fillColor: col, fillOpacity: 1, interactive: false }).addTo(hfLayer);
+  });
+}
+function hfDesc(it) {
+  const ht = (it.est ? 'about ' : '') + fmtLen(it.h) + (it.est ? ' (estimated)' : '');
+  const len = it.kind === 'line' ? fmtDist(shLength(it.pts)) + ' in the area · ' : '';
+  const how = it.hazard === 'nofly' ? 'route around, keep ' + fmtLen(it.buf) + ' away' : 'fly over';
+  return `${esc(it.what)} · ${len}${ht} · ${how} · ${esc(it.src)}${it.dup ? ' · already added' : ''}`;
+}
+function renderHf() {
+  let h = '<div class="card"><h2>Find power lines & towers</h2>';
+  if (hf.state === 'big') h += `<p class="note">That's too large an area to search. ${hf.mission ? 'The mission covers a very wide area.' : 'Zoom the map in closer to the property,'} or draw the mission first; the search covers the mission plus about a third of a mile around it.</p><div class="btns"><button class="btn primary" data-hf="close">OK</button></div>`;
+  else if (hf.state === 'loading') h += `<p class="note">Searching OpenStreetMap and the FAA obstacle file ${hf.mission ? 'around this mission' : 'in the map view'}…</p><div class="btns"><button class="btn" data-hf="cancel">Cancel</button></div>`;
+  else if (hf.state === 'error') h += `<div class="status bad">Couldn't reach OpenStreetMap or the FAA. This needs internet.</div><div class="btns"><button class="btn" data-hf="cancel">Close</button><button class="btn primary" data-hf="retry">Try again</button></div>`;
+  else {
+    const n = hf.items.filter(i => i.on).length;
+    h += `<p class="note">Searched ${hf.mission ? 'around this mission' : 'the map view'}. OpenStreetMap: ${hf.osm || hf.nOsm + ' found'} · FAA obstacle file: ${hf.faa || hf.nFaa + ' found'}.</p>
+      <div class="warn" style="margin-bottom:8px">⚠ Neither source is complete. Small lines to houses, wells and barns are often missing, and heights marked estimated are guesses. Look over the map and mark anything else yourself.</div>`;
+    if (!hf.items.length) h += '<p class="note">Nothing found here. That doesn\'t mean there\'s nothing there.</p>';
+    else h += '<div class="mlist">' + hf.items.map((it, i) => `<label class="mitem${it.on ? ' on' : ''}"><input type="checkbox" data-hfi="${i}"${it.on ? ' checked' : ''}${it.dup ? ' disabled' : ''}><div style="flex:1;min-width:0"><b>${esc(it.name)}</b><small style="font-family:var(--font)">${hfDesc(it)}</small></div><button class="btn small" data-hf="show" data-i="${i}">Show</button></label>`).join('') + '</div>';
+    h += `<p class="note">Added items become hazards you can edit in Features (height, keep-away distance, fly over or no-fly).</p>
+      <div class="btns"><button class="btn" data-hf="cancel">Cancel</button><button class="btn primary" data-hf="add"${n ? '' : ' disabled'}>Add ${n} hazard${n === 1 ? '' : 's'}</button></div>`;
+  }
+  sheet.innerHTML = h + '</div>';
+}
+function hfRing(c, r) { const pr = projector(c); return [0, 1, 2, 3, 4, 5, 6, 7].map(k => pr.ll([r * Math.cos(k * Math.PI / 4), r * Math.sin(k * Math.PI / 4)])); }
+function hfAdd() {
+  const add = hf.items.filter(i => i.on && !i.dup), t0 = Date.now();
+  add.forEach((it, k) => {
+    const notes = `Added from ${it.src}${it.est ? '. Height is an estimate: check it on the ground' : ''}${it.lit ? '. Lit at night' : ''}.`;
+    const base = { id: 's' + t0 + '_' + k, name: it.name, notes, hazard: it.hazard, top: Math.round(it.top * 10) / 10, buf: Math.round(it.buf * 10) / 10, src: it.id };
+    if (it.kind === 'line') shapes.push(Object.assign(base, { kind: 'line', type: 'power', pts: it.pts.map(p => [+p[0].toFixed(7), +p[1].toFixed(7)]) }));
+    else shapes.push(Object.assign(base, { kind: 'area', type: 'tower', pts: hfRing(it.pt, 4).map(p => [+p[0].toFixed(7), +p[1].toFixed(7)]) }));
+  });
+  if (mkVis.shapes === false) { mkVis.shapes = true; mkSaveVis(); }
+  hf = null; hfDraw(); sheet.hidden = true;
+  shSave(); renderShapes(); commit(false);
+  toast(`Added ${add.length} hazard${add.length === 1 ? '' : 's'}. Edit them in Features.`);
+}
+function hfClick(e) {
+  if (e.target === sheet) { sheet.hidden = true; return; }
+  const c = e.target.closest('input[data-hfi]');
+  if (c) { const it = hf.items[+c.dataset.hfi]; it.on = c.checked; hfDraw(); renderHf(); return; }
+  const b = e.target.closest('[data-hf]'); if (!b || b.disabled) return;
+  e.preventDefault();
+  const k = b.dataset.hf;
+  if (k === 'close') { hf = null; sheet.hidden = true; }
+  else if (k === 'cancel') { hf = null; hfDraw(); sheet.hidden = true; renderPanel(); }
+  else if (k === 'retry') { hf = null; openFindHazards(); }
+  else if (k === 'add') hfAdd();
+  else if (k === 'show') {
+    const it = hf.items[+b.dataset.i]; if (!it) return;
+    sheet.hidden = true;
+    if (it.kind === 'line') map.fitBounds(L.latLngBounds(it.pts).pad(0.2)); else map.setView(it.pt, Math.max(map.getZoom(), 16));
+    renderPanel(); toast('Tap “Review found hazards” in the panel to go back to the list');
+  }
 }
 
 /* ---------- FAA airspace ----------
