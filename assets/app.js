@@ -3350,20 +3350,38 @@ function openFindHazards() {
   if (a.box[2] - a.box[0] > 0.3 || a.box[3] - a.box[1] > 0.35) { hf.state = 'big'; renderHf(); return; }
   renderHf(); hfFetch();
 }
-function hfFetch() {
+function hfTimed(url, opts, ms) {
+  const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null, t = setTimeout(() => ctl && ctl.abort(), ms);
+  return fetch(url, Object.assign({}, opts, ctl ? { signal: ctl.signal } : {})).then(r => { clearTimeout(t); return r; }, e => { clearTimeout(t); throw ctl && ctl.signal.aborted ? new Error('timeout') : e; });
+}
+/* Both sources load on their own; the list shows as soon as either answers and fills in as the other arrives. */
+function hfFetch(only) {
   const b = hf.box, bb = b.map(v => v.toFixed(5)).join(','), me = hf;
-  const q = `[out:json][timeout:25];(way["power"~"^(line|minor_line)$"](${bb});node["man_made"~"^(mast|tower|communications_tower|chimney)$"](${bb});node["power"="generator"]["generator:source"="wind"](${bb}););out geom tags;`;
-  const osm = fetch(HF_OVERPASS, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'data=' + encodeURIComponent(q) }).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
-  const dof = fetch(HF_DOF + '?where=1%3D1&geometry=' + [b[1], b[0], b[3], b[2]].map(v => v.toFixed(5)).join(',') + '&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=OAS_Number,City,Type_Code,AGL,Lighting&returnGeometry=true&outSR=4326&resultRecordCount=2000&f=geojson').then(r => r.json()).then(j => { if (j.error) throw new Error(j.error.message); return j; });
-  Promise.allSettled([osm, dof]).then(([o, d]) => {
+  const why = e => /timeout/.test(e && e.message) ? 'timed out (its free server is busy)' : /HTTP (429|50\d)/.test(e && e.message) ? 'busy right now' : 'couldn\'t reach';
+  const done = () => {
     if (hf !== me) return;
-    const A = o.status === 'fulfilled' ? hfFromOsm(o.value, b) : [], B = d.status === 'fulfilled' ? hfFromDof(d.value) : [];
-    me.osm = o.status === 'fulfilled' ? '' : 'couldn\'t reach'; me.faa = d.status === 'fulfilled' ? '' : 'couldn\'t reach';
-    if (me.osm && me.faa) { me.state = 'error'; }
-    else { me.items = hfMerge(A, B); me.state = 'done'; me.nOsm = A.length; me.nFaa = B.length; }
-    hfDraw(); if (sheetMode === 'hfind' && !sheet.hidden) renderHf();
-    if (sheet.hidden && me.state === 'done') renderPanel();
-  });
+    if (me.osm !== 'loading' && me.faa !== 'loading' && me.osmItems == null && me.faaItems == null) me.state = 'error';
+    else if (me.osmItems != null || me.faaItems != null) {
+      const keep = {}; (me.items || []).forEach(it => { keep[it.id] = it.on; });
+      me.items = hfMerge(me.osmItems || [], me.faaItems || []);
+      me.items.forEach(it => { if (!it.dup && it.id in keep) it.on = keep[it.id]; });
+      me.nOsm = (me.osmItems || []).length; me.nFaa = (me.faaItems || []).length; me.state = 'done';
+    }
+    hfDraw(); if (sheetMode === 'hfind' && !sheet.hidden) renderHf(); else if (me.state === 'done') renderPanel();
+  };
+  if (only !== 'faa') {
+    me.osm = 'loading'; me.osmItems = null;
+    const q = `[out:json][timeout:50];(way["power"~"^(line|minor_line)$"](${bb});node["man_made"~"^(mast|tower|communications_tower|chimney)$"](${bb});node["power"="generator"]["generator:source"="wind"](${bb}););out geom tags;`;
+    hfTimed(HF_OVERPASS, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'data=' + encodeURIComponent(q) }, 60000)
+      .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(j => { if (hf !== me) return; me.osmItems = hfFromOsm(j, b); me.osm = ''; done(); }, e => { if (hf !== me) return; me.osm = why(e); done(); });
+  }
+  if (only !== 'osm') {
+    me.faa = 'loading'; me.faaItems = null;
+    hfTimed(HF_DOF + '?where=1%3D1&geometry=' + [b[1], b[0], b[3], b[2]].map(v => v.toFixed(5)).join(',') + '&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=OAS_Number,City,Type_Code,AGL,Lighting&returnGeometry=true&outSR=4326&resultRecordCount=2000&f=geojson', {}, 30000)
+      .then(r => r.json()).then(j => { if (j.error) throw new Error(j.error.message); return j; })
+      .then(j => { if (hf !== me) return; me.faaItems = hfFromDof(j); me.faa = ''; done(); }, e => { if (hf !== me) return; me.faa = why(e); done(); });
+  }
 }
 function hfDraw() {
   hfLayer.clearLayers();
@@ -3384,12 +3402,15 @@ function renderHf() {
   let h = '<div class="card"><h2>Find power lines & towers</h2>';
   if (hf.state === 'big') h += `<p class="note">That's too large an area to search. ${hf.mission ? 'The mission covers a very wide area.' : 'Zoom the map in closer to the property,'} or draw the mission first; the search covers the mission plus about a third of a mile around it.</p><div class="btns"><button class="btn primary" data-hf="close">OK</button></div>`;
   else if (hf.state === 'loading') h += `<p class="note">Searching OpenStreetMap and the FAA obstacle file ${hf.mission ? 'around this mission' : 'in the map view'}…</p><div class="btns"><button class="btn" data-hf="cancel">Cancel</button></div>`;
-  else if (hf.state === 'error') h += `<div class="status bad">Couldn't reach OpenStreetMap or the FAA. This needs internet.</div><div class="btns"><button class="btn" data-hf="cancel">Close</button><button class="btn primary" data-hf="retry">Try again</button></div>`;
+  else if (hf.state === 'error') h += `<div class="status bad">Couldn't get results. OpenStreetMap ${esc(hf.osm)}; FAA ${esc(hf.faa)}. This needs internet; if you're online, the free servers may be busy, so try again in a few minutes.</div><div class="btns"><button class="btn" data-hf="cancel">Close</button><button class="btn primary" data-hf="retry">Try again</button></div>`;
   else {
     const n = hf.items.filter(i => i.on).length;
-    h += `<p class="note">Searched ${hf.mission ? 'around this mission' : 'the map view'}. OpenStreetMap: ${hf.osm || hf.nOsm + ' found'} · FAA obstacle file: ${hf.faa || hf.nFaa + ' found'}.</p>
+    const src = (st, n) => st === 'loading' ? '<i>still searching…</i>' : st || n + ' found';
+    const retry = (hf.osm && hf.osm !== 'loading') || (hf.faa && hf.faa !== 'loading');
+    h += `<p class="note">Searched ${hf.mission ? 'around this mission' : 'the map view'}. OpenStreetMap: ${src(hf.osm, hf.nOsm)} · FAA obstacle file: ${src(hf.faa, hf.nFaa)}.${hf.osm === 'loading' ? ' OpenStreetMap can take up to a minute when it\'s busy; you can add items from the list meanwhile.' : ''}</p>
+      ${retry ? `<div class="btns" style="margin-bottom:8px"><button class="btn small" data-hf="retrysrc">Try ${hf.osm && hf.osm !== 'loading' ? 'OpenStreetMap' : 'the FAA'} again</button></div>` : ''}
       <div class="warn" style="margin-bottom:8px">⚠ Neither source is complete. Small lines to houses, wells and barns are often missing, and heights marked estimated are guesses. Look over the map and mark anything else yourself.</div>`;
-    if (!hf.items.length) h += '<p class="note">Nothing found here. That doesn\'t mean there\'s nothing there.</p>';
+    if (!hf.items.length) h += hf.osm === 'loading' ? '' : '<p class="note">Nothing found here. That doesn\'t mean there\'s nothing there.</p>';
     else h += '<div class="mlist">' + hf.items.map((it, i) => `<label class="mitem${it.on ? ' on' : ''}"><input type="checkbox" data-hfi="${i}"${it.on ? ' checked' : ''}${it.dup ? ' disabled' : ''}><div style="flex:1;min-width:0"><b>${esc(it.name)}</b><small style="font-family:var(--font)">${hfDesc(it)}</small></div><button class="btn small" data-hf="show" data-i="${i}">Show</button></label>`).join('') + '</div>';
     h += `<p class="note">Added items become hazards you can edit in Features (height, keep-away distance, fly over or no-fly).</p>
       <div class="btns"><button class="btn" data-hf="cancel">Cancel</button><button class="btn primary" data-hf="add"${n ? '' : ' disabled'}>Add ${n} hazard${n === 1 ? '' : 's'}</button></div>`;
@@ -3420,6 +3441,7 @@ function hfClick(e) {
   if (k === 'close') { hf = null; sheet.hidden = true; }
   else if (k === 'cancel') { hf = null; hfDraw(); sheet.hidden = true; renderPanel(); }
   else if (k === 'retry') { hf = null; openFindHazards(); }
+  else if (k === 'retrysrc') { hfFetch(hf.osm && hf.osm !== 'loading' ? 'osm' : 'faa'); renderHf(); }
   else if (k === 'add') hfAdd();
   else if (k === 'show') {
     const it = hf.items[+b.dataset.i]; if (!it) return;
