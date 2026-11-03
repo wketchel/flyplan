@@ -534,6 +534,7 @@
 
   window.PcHost = {
     _MbReader: MbReader,
+    tileBlob(id, z, x, y) { return readTile(id, z, x, y); },
     mapLayer(m, opt) {
       const Layer = L.GridLayer.extend({
         createTile(c, done) {

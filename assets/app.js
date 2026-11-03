@@ -2327,18 +2327,67 @@ function covZoom(m) {
   if (m.bounds) {
     const est = z2 => { const n = Math.pow(2, z2), x = v => (v + 180) / 360 * n, y = v => (1 - Math.log(Math.tan(v * Math.PI / 180) + 1 / Math.cos(v * Math.PI / 180)) / Math.PI) / 2 * n;
       return Math.abs(x(m.bounds[2]) - x(m.bounds[0]) + 1) * Math.abs(y(m.bounds[1]) - y(m.bounds[3]) + 1); };
-    while (z > m.minzoom && est(z) > 40000) z--;
+    while (z > m.minzoom && est(z) > 1500) z--;
   }
   return Math.max(m.minzoom, z);
 }
-function covMsg(msg) {
+const COV_V = 2;
+function covTileImg(m, z, x, y) {
+  return new Promise(res => {
+    const img = new Image(); img.crossOrigin = 'anonymous';
+    const fin = ok => { res(ok ? img : null); };
+    img.onload = () => fin(true); img.onerror = () => fin(false);
+    if (PC && window.PcHost.tileBlob) window.PcHost.tileBlob(m.id, z, x, y).then(b => { if (!b) return fin(false); const u = URL.createObjectURL(b); img.onload = () => { URL.revokeObjectURL(u); fin(true); }; img.src = u; }, () => fin(false));
+    else img.src = (window.MB_BASE || 'https://mbtiles.invalid/') + `${m.id}/${z}/${x}/${y}`;
+  });
+}
+/* The host lists which tiles exist; each tile is then checked pixel by pixel (in G×G blocks) so the outline follows
+   the imagery itself, not the square tiles around it (tile sets often include empty, transparent tiles). */
+async function covMsg(msg) {
   const m = myMaps.find(x => x.id === msg.id); if (!m) return;
-  covCache[m.id] = { z: msg.z, size: m.size, loops: covLoops(msg.tiles || [], msg.z) };
+  const t = msg.tiles || [], z = msg.z, nt = t.length / 2, G = nt <= 400 ? 32 : 16, sh = Math.log2(G);
+  const cv = document.createElement('canvas'); cv.width = cv.height = G;
+  const cx = cv.getContext('2d', { willReadFrequently: true });
+  const cells = []; let idx = 0, failed = 0;
+  const work = async () => {
+    while (idx < nt) {
+      const i = idx++, x = t[2 * i], y = t[2 * i + 1];
+      const img = await covTileImg(m, z, x, y);
+      if (!img) { failed++; continue; }
+      cx.clearRect(0, 0, G, G); cx.drawImage(img, 0, 0, G, G);
+      let d; try { d = cx.getImageData(0, 0, G, G).data; } catch (e) { failed = nt; return; }
+      for (let k = 0; k < G * G; k++) {
+        const a = d[4 * k + 3], lum = d[4 * k] + d[4 * k + 1] + d[4 * k + 2];
+        if (a > 100 && lum > 6) cells.push((x << sh) + (k % G), (y << sh) + Math.floor(k / G));
+      }
+    }
+  };
+  await Promise.all([0, 1, 2, 3, 4, 5].map(work));
+  // If the pixels can't be read, fall back to whole tiles.
+  const loops = failed >= nt ? covLoops(t, z, 1) : covLoops(cells, z + sh, Math.max(6, G * G / 8));
+  covCache[m.id] = { v: COV_V, z, size: m.size, loops };
   try { localStorage.setItem('planner.mapcov', JSON.stringify(covCache)); } catch (e) { try { localStorage.removeItem('planner.mapcov'); } catch (e2) {} }
   covDraw();
 }
+/* Douglas-Peucker on [lat, lng] points, tolerance in metres. */
+function covSimplify(pts, tol) {
+  if (pts.length < 5) return pts;
+  const pr = projector(pts[0]), P = pts.map(pr.xy), keep = new Uint8Array(P.length); keep[0] = keep[P.length - 1] = 1;
+  const st = [[0, P.length - 1]];
+  while (st.length) {
+    const [i, j] = st.pop(); let w = -1, dm = tol;
+    const [ax, ay] = P[i], [bx, by] = P[j], dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy;
+    for (let k = i + 1; k < j; k++) {
+      const [px, py] = P[k]; let d;
+      if (!L2) d = Math.hypot(px - ax, py - ay); else { const f = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / L2)); d = Math.hypot(px - ax - f * dx, py - ay - f * dy); }
+      if (d > dm) { dm = d; w = k; }
+    }
+    if (w > 0) { keep[w] = 1; st.push([i, w], [w, j]); }
+  }
+  return pts.filter((p, k) => keep[k]);
+}
 /* Traces the outline of a set of tiles (flat [x, y, x, y, ...], XYZ) into closed loops of [lat, lng]. */
-function covLoops(t, z) {
+function covLoops(t, z, minCells) {
   const has = new Set(); for (let i = 0; i < t.length; i += 2) has.add(t[i] + ',' + t[i + 1]);
   const out = new Map(); let ne = 0;
   const edge = (x1, y1, x2, y2) => { const k = x1 + ',' + y1; (out.get(k) || out.set(k, []).get(k)).push([x2, y2]); ne++; };
@@ -2362,7 +2411,8 @@ function covLoops(t, z) {
     // drop points in the middle of straight runs
     const s = pts.filter((p, i) => { if (i === 0 || i === pts.length - 1) return true; const a = pts[i - 1], b = pts[i + 1]; return !((a[0] === p[0] && p[0] === b[0]) || (a[1] === p[1] && p[1] === b[1])); });
     if (s.length > 4) { const a = s[s.length - 2], p = s[0], b = s[1]; if ((a[0] === p[0] && p[0] === b[0]) || (a[1] === p[1] && p[1] === b[1])) { s.shift(); s[s.length - 1] = s[0]; } }
-    if (s.length >= 4) loops.push(s.map(p => ll(p[0], p[1])));
+    let area = 0; for (let i = 1; i < s.length; i++) area += s[i - 1][0] * s[i][1] - s[i][0] * s[i - 1][1];
+    if (s.length >= 4 && Math.abs(area / 2) >= (minCells || 1)) loops.push(covSimplify(s.map(p => ll(p[0], p[1])), 1.5));
   }
   return loops;
 }
@@ -2372,12 +2422,12 @@ function covDraw() {
   myMaps.forEach(m => {
     if (m.missing || m.locked || !myState(m.id).on) return;
     const c = covCache[m.id];
-    if (!c || c.size !== m.size) {
+    if (!c || c.size !== m.size || c.v !== COV_V) {
       if (!covAsked[m.id] && native && native.mapCoverage) { covAsked[m.id] = 1; native.mapCoverage(m.id, covZoom(m)); }
-      if (!m.bounds) return;
+      return;   // drawn once the outline has been traced
     }
     const col = mapColor(m), dt = mapDate(m);
-    const loops = c && c.size === m.size ? c.loops : [[[m.bounds[1], m.bounds[0]], [m.bounds[1], m.bounds[2]], [m.bounds[3], m.bounds[2]], [m.bounds[3], m.bounds[0]], [m.bounds[1], m.bounds[0]]]];
+    const loops = c && c.size === m.size && c.v === COV_V ? c.loops : [[[m.bounds[1], m.bounds[0]], [m.bounds[1], m.bounds[2]], [m.bounds[3], m.bounds[2]], [m.bounds[3], m.bounds[0]], [m.bounds[1], m.bounds[0]]]];
     if (!loops.length) return;
     loops.forEach(lp => {
       L.polyline(lp, { color: '#000', weight: 5, opacity: 0.35, interactive: false }).addTo(covLayer);
