@@ -8,7 +8,7 @@ const CAMERAS = {
   wide: { label: 'Wide 24 mm (1x)', f: 24, px: 8192 },
   tele: { label: 'Medium tele 70 mm (3x)', f: 70, px: 8064 },
 };
-const APP_VERSION = '1.45';
+const APP_VERSION = '1.46';
 const MAX_ALT = 121.92;                          // 400 ft
 const HZ_DEFAULTS = { over: { top: 15.24, buf: 15.24 }, nofly: { top: 0, buf: 10 } };
 const STOP_PENALTY_S = 2.5;                      // time lost decelerating at a stop-and-turn waypoint
@@ -943,10 +943,13 @@ function renderMap() {
   const hzmp = hzShapes().length ? missionPoints() : null, hz = hzmp && hzmp.hazard;
   if (hz && (hz.detours || hz.climbs.length)) L.polyline(hzmp.map(p => [p.w.lat, p.w.lng]), { color: '#ffffff', weight: 2, dashArray: '2 6', opacity: 0.9, interactive: false }).addTo(routeLayer);
   if (hz) hz.spots.forEach(c => {
-    L.polyline([c.a, c.b], { color: '#ffd43b', weight: 10, opacity: 0.45, lineCap: 'butt', interactive: false }).addTo(routeLayer);
-    L.marker(c.at, { interactive: false, zIndexOffset: 1800, icon: L.divIcon({ className: '', html: `<div style="text-align:center"><span class="hzclimb">▲ ${fmtLen(c.to)} over ${esc(c.name)}</span></div>`, iconSize: [220, 22], iconAnchor: [110, 32] }) }).addTo(routeLayer);
+    L.polyline([c.a, c.b], { color: '#ffd43b', weight: 8, opacity: 0.4, lineCap: 'butt', interactive: false }).addTo(routeLayer);
+    const len = hav(c.a, c.b);
+    L.marker(c.at, { zIndexOffset: 1800, title: 'Climbs over ' + c.name, icon: L.divIcon({ className: '', html: '<div class="hzsym"><svg viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z" fill="#1a1a1a"/></svg></div>', iconSize: [24, 24], iconAnchor: [12, 12] }) }).addTo(routeLayer)
+      .bindPopup(`<div class="hzpop"><b>${esc(c.name)}</b>Climbs from ${fmtLen(c.from)} to <b>${fmtLen(c.to)}</b> above takeoff to cross it, then back down.<small>Hazard top ${fmtLen(c.top)} + ${fmtLen(S.hzMargin != null ? S.hzMargin : 10)} clearance · raised for ${fmtLen(len)} of the route</small></div>`, { closeButton: false, offset: [0, -6] });
   });
-  if (hz) hz.problems.forEach(p => L.marker(p.at, { interactive: false, zIndexOffset: 2000, icon: L.divIcon({ className: '', html: '<div class="hzbad">!</div>', iconSize: [26, 26], iconAnchor: [13, 13] }) }).addTo(routeLayer));
+  if (hz) hz.problems.forEach(p => L.marker(p.at, { zIndexOffset: 2000, title: p.name, icon: L.divIcon({ className: '', html: '<div class="hzbad">!</div>', iconSize: [26, 26], iconAnchor: [13, 13] }) }).addTo(routeLayer)
+    .bindPopup(`<div class="hzpop"><b>⚠ ${esc(p.name)}</b>${p.kind === 'low' ? `Route passes ${fmtLen(p.alt)} above takeoff here; it needs ${fmtLen(p.need)}. Turn on Climb over hazards or raise the altitude.` : p.kind === 'inside' ? 'A waypoint is inside this no-fly zone. Move it out.' : 'The route enters this no-fly zone. Turn on Route around no-fly zones or change the route.'}</div>`, { closeButton: false, offset: [0, -8] }));
   const rg = intervalRange();
   if (rg && !usesPhotoPoints()) L.polyline(W.slice(rg[0], rg[1] + 1).map(w => [w.lat, w.lng]), { color: '#ffd43b', weight: 2, dashArray: '2 8', opacity: 0.9, interactive: false }).addTo(routeLayer);
   else if (rg) {
