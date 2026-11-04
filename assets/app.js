@@ -8,13 +8,35 @@ const CAMERAS = {
   wide: { label: 'Wide 24 mm (1x)', f: 24, px: 8192 },
   tele: { label: 'Medium tele 70 mm (3x)', f: 70, px: 8064 },
 };
-const APP_VERSION = '1.49';
+const APP_VERSION = '1.50';
 const MAX_ALT = 121.92;                          // 400 ft
 const HZ_DEFAULTS = { over: { top: 15.24, buf: 15.24 }, nofly: { top: 0, buf: 10 } };
 const STOP_PENALTY_S = 2.5;                      // time lost decelerating at a stop-and-turn waypoint
 const native = window.Android || null;
 const PC = !!window.PcHost;
 const DESKTOP = PC || !!window.WinHost; // browser PC version or the Windows app
+const DRAG = DESKTOP ? 'Right-drag' : 'Drag';
+/* With a mouse, things on the map move only with the RIGHT button, so panning with the left button never drags a
+   marker, corner or waypoint by accident. Touch screens work as before. */
+if (DESKTOP && L.Draggable) {
+  const onDown = L.Draggable.prototype._onDown;
+  L.Draggable.prototype._onDown = function (e) {
+    if (e.type === 'mousedown' && this._element && this._element.classList && this._element.classList.contains('leaflet-marker-icon')) {
+      if (e.button !== 2) return;                     // left button: let the map pan instead
+      window.__rightDrag = Date.now();
+      e = new Proxy(e, { get: (t, k) => k === 'which' ? 1 : k === 'button' ? 0 : (typeof t[k] === 'function' ? t[k].bind(t) : t[k]) });
+    }
+    return onDown.call(this, e);
+  };
+  // Panning that starts on a marker must not count as a tap on it when the button is released.
+  let downAt = null;
+  document.addEventListener('mousedown', e => { downAt = e.button === 0 && e.target.closest && e.target.closest('.leaflet-marker-icon') ? [e.clientX, e.clientY] : null; }, true);
+  document.addEventListener('click', e => { if (downAt && Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 6) { e.stopPropagation(); e.preventDefault(); } downAt = null; }, true);
+  // A right-click on a map item (or the end of a right-drag) mustn't open a menu or add a marker.
+  document.addEventListener('contextmenu', e => {
+    if (e.target.closest && (e.target.closest('.leaflet-marker-icon') || Date.now() - (window.__rightDrag || 0) < 1500 && e.target.closest('.leaflet-container'))) { e.preventDefault(); e.stopPropagation(); }
+  }, true);
+}
 const DEV = DESKTOP ? 'this PC' : 'this tablet';
 
 const DEFAULTS = {
@@ -814,7 +836,7 @@ map.on('moveend', () => { const c = map.getCenter(); S.view = { c: [c.lat, c.lng
 
 let draw = null;   // { tool, pts }
 const HINTS = {
-  waypoint: 'Tap the map to add waypoints. Drag a waypoint to move it.',
+  waypoint: `Tap the map to add waypoints. ${DRAG} a waypoint to move it.`,
   rect: 'Tap one corner, then the opposite corner.',
   polygon: 'Tap each corner of the area, then press Finish.',
   poi: 'Tap the point of interest to orbit.',
@@ -823,7 +845,7 @@ const HINTS = {
   measure: 'Tap points to measure. Tap Done when finished.',
   barea: 'Tap each corner of the area, then press Finish.',
   bline: 'Tap points along the line, then press Finish.',
-  shapeedit: 'Drag the corners to reshape it. Tap Done when finished.',
+  shapeedit: `${DRAG} the corners to reshape it. Tap Done when finished.`,
 };
 /* While a tool is active (adding waypoints, measuring, drawing), existing features ignore taps so every tap lands on the
    map. Mission waypoints stay movable only with the Waypoint tool, whose hint says they can be dragged. */
@@ -2535,7 +2557,7 @@ function renderMarker() {
     <label class="f"><span>Name</span><div class="in"><input type="text" id="mkname" value="${esc(m.name)}" placeholder="${esc(MK_TYPES[m.type].label)}"></div></label>
     <label class="f"><span>Notes</span><div class="in"><textarea id="mknotes" rows="3" placeholder="Height, direction, last checked…">${esc(m.notes)}</textarea></div></label>
     ${phStrip(m, 'm')}
-    <p class="note">Location: <b>${coords}</b> <button class="btn small" data-k="copy">Copy</button> · Drag the marker on the map to move it.</p>
+    <p class="note">Location: <b>${coords}</b> <button class="btn small" data-k="copy">Copy</button> · ${DRAG} the marker on the map to move it.</p>
     <div class="btns" style="margin-bottom:8px"><button class="btn small" data-k="orbit">Orbit this (POI)</button><button class="btn small" data-k="wp">Add as waypoint</button><button class="btn small" data-k="go">Center map</button></div>
     <div class="btns"><button class="btn danger" data-k="del">${mkArmed ? 'Tap again to delete' : 'Delete'}</button><button class="btn primary" data-k="done">Done</button></div></div>`;
   phFillThumbs(sheet);
