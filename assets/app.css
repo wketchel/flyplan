@@ -318,3 +318,4 @@ select option:disabled { color: var(--muted); }
 .footbadge.bad { background: rgba(224,49,49,.15); color: var(--bad); }
 .himk{width:26px;height:26px;border-radius:50%;background:#fff;color:#2b8a3e;border:2px solid #2b8a3e;box-shadow:0 1px 4px rgba(0,0,0,.5);box-sizing:border-box;cursor:pointer}
 .himk svg{width:16px;height:16px;display:block;margin:3px auto 0}
+.leaflet-marker-icon.lp-drag{filter:drop-shadow(0 0 6px #ffd43b) drop-shadow(0 4px 6px rgba(0,0,0,.5));transition:filter .15s}

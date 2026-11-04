@@ -8,33 +8,54 @@ const CAMERAS = {
   wide: { label: 'Wide 24 mm (1x)', f: 24, px: 8192 },
   tele: { label: 'Medium tele 70 mm (3x)', f: 70, px: 8064 },
 };
-const APP_VERSION = '1.51';
+const APP_VERSION = '1.52';
 const MAX_ALT = 121.92;                          // 400 ft
 const HZ_DEFAULTS = { over: { top: 15.24, buf: 15.24 }, nofly: { top: 0, buf: 10 } };
 const STOP_PENALTY_S = 2.5;                      // time lost decelerating at a stop-and-turn waypoint
 const native = window.Android || null;
 const PC = !!window.PcHost;
 const DESKTOP = PC || !!window.WinHost; // browser PC version or the Windows app
-const DRAG = DESKTOP ? 'Right-drag' : 'Drag';
-/* With a mouse, things on the map move only with the RIGHT button, so panning with the left button never drags a
-   marker, corner or waypoint by accident. Touch screens work as before. */
-if (DESKTOP && L.Draggable) {
+const DRAG = DESKTOP ? 'Right-drag' : 'Press and hold, then drag';
+/* Moving things on the map takes a deliberate gesture, so panning never drags a marker, corner or waypoint by
+   accident: with a mouse, drag with the RIGHT button; on a touch screen, press and hold (about half a second) first. */
+const LONG_PRESS_MS = 450;
+if (L.Draggable) {
   const onDown = L.Draggable.prototype._onDown;
   L.Draggable.prototype._onDown = function (e) {
-    if (e.type === 'mousedown' && this._element && this._element.classList && this._element.classList.contains('leaflet-marker-icon')) {
+    const onMarker = this._element && this._element.classList && this._element.classList.contains('leaflet-marker-icon');
+    if (onMarker && e.type === 'mousedown' && DESKTOP) {
       if (e.button !== 2) return;                     // left button: let the map pan instead
       window.__rightDrag = Date.now();
       e = new Proxy(e, { get: (t, k) => k === 'which' ? 1 : k === 'button' ? 0 : (typeof t[k] === 'function' ? t[k].bind(t) : t[k]) });
+    } else if (onMarker && e.type === 'touchstart' && !this._lpGo) {
+      if (!e.touches || e.touches.length !== 1) return;
+      const self = this, el = this._element, x = e.touches[0].clientX, y = e.touches[0].clientY;
+      const stop = () => { clearTimeout(timer); document.removeEventListener('touchmove', mv, true); document.removeEventListener('touchend', stop, true); document.removeEventListener('touchcancel', stop, true); };
+      const mv = ev => { const t = ev.touches && ev.touches[0]; if (!t || Math.hypot(t.clientX - x, t.clientY - y) > 10) stop(); };   // moved early: it's a pan
+      const timer = setTimeout(() => {
+        stop();
+        window.__longPress = Date.now();
+        map.dragging.disable();                       // the map was also listening; hand the gesture to the item
+        el.classList.add('lp-drag'); try { if (navigator.vibrate) navigator.vibrate(25); } catch (err) {}
+        self._lpGo = true; onDown.call(self, e); self._lpGo = false;
+        const done = () => { map.dragging.enable(); el.classList.remove('lp-drag'); document.removeEventListener('touchend', done, true); document.removeEventListener('touchcancel', done, true); };
+        document.addEventListener('touchend', done, true); document.addEventListener('touchcancel', done, true);
+      }, LONG_PRESS_MS);
+      document.addEventListener('touchmove', mv, true); document.addEventListener('touchend', stop, true); document.addEventListener('touchcancel', stop, true);
+      return;
     }
     return onDown.call(this, e);
   };
-  // Panning that starts on a marker must not count as a tap on it when the button is released.
-  let downAt = null;
-  document.addEventListener('mousedown', e => { downAt = e.button === 0 && e.target.closest && e.target.closest('.leaflet-marker-icon') ? [e.clientX, e.clientY] : null; }, true);
-  document.addEventListener('click', e => { if (downAt && Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 6) { e.stopPropagation(); e.preventDefault(); } downAt = null; }, true);
-  // A right-click on a map item (or the end of a right-drag) mustn't open a menu or add a marker.
+  if (DESKTOP) {
+    // Panning that starts on a marker must not count as a tap on it when the button is released.
+    let downAt = null;
+    document.addEventListener('mousedown', e => { downAt = e.button === 0 && e.target.closest && e.target.closest('.leaflet-marker-icon') ? [e.clientX, e.clientY] : null; }, true);
+    document.addEventListener('click', e => { if (downAt && Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 6) { e.stopPropagation(); e.preventDefault(); } downAt = null; }, true);
+  }
+  // A right-click or long press on a map item (or the end of a move) mustn't open a menu or add a new marker.
   document.addEventListener('contextmenu', e => {
-    if (e.target.closest && (e.target.closest('.leaflet-marker-icon') || Date.now() - (window.__rightDrag || 0) < 1500 && e.target.closest('.leaflet-container'))) { e.preventDefault(); e.stopPropagation(); }
+    const recent = Date.now() - Math.max(window.__rightDrag || 0, window.__longPress || 0) < 1500;
+    if (e.target.closest && (e.target.closest('.leaflet-marker-icon') || recent && e.target.closest('.leaflet-container'))) { e.preventDefault(); e.stopPropagation(); }
   }, true);
 }
 const DEV = DESKTOP ? 'this PC' : 'this tablet';
