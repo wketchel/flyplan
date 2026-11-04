@@ -8,7 +8,7 @@ const CAMERAS = {
   wide: { label: 'Wide 24 mm (1x)', f: 24, px: 8192 },
   tele: { label: 'Medium tele 70 mm (3x)', f: 70, px: 8064 },
 };
-const APP_VERSION = '1.52';
+const APP_VERSION = '1.53';
 const MAX_ALT = 121.92;                          // 400 ft
 const HZ_DEFAULTS = { over: { top: 15.24, buf: 15.24 }, nofly: { top: 0, buf: 10 } };
 const STOP_PENALTY_S = 2.5;                      // time lost decelerating at a stop-and-turn waypoint
@@ -2566,6 +2566,10 @@ const MK_TYPES = {
   gate: { label: 'Gate', color: '#2b8a3e', path: 'M4 5v14M20 5v14M4 9h16M4 15h16M4 15L20 9' },
   crossing: { label: 'Road / crossing', color: '#5c677d', path: 'M8 3L5 21M16 3l3 18M12 5v3M12 11v3M12 17v3' },
   landmark: { label: 'Landmark', color: '#c2255c', path: 'M6 21V4M6 4h11l-2 4 2 4H6' },
+  bedding: { label: 'Deer bedding', color: '#d9480f', path: 'M3 15c0-3.6 4-6 9-6s9 2.4 9 6-4 4.5-9 4.5S3 18.6 3 15zM8 14c1.2-1 2.5-1.5 4-1.5s2.8.5 4 1.5', ph: 'Buck or doe sign, wind direction, cover…' },
+  building: { label: 'Building', color: '#495057', path: 'M3 11l9-7 9 7M5 10v10h14V10M10 20v-6h4v6', ph: 'Barn, cabin, shed, well house…' },
+  camp: { label: 'Campsite', color: '#0c8599', path: 'M2 20h20M4 20L12 6l8 14M10 20l2-4 2 4', ph: 'Fire ring, water, tent pads…' },
+  harvest: { label: 'Game harvest', color: '#c92a2a', path: 'M12 21v-7M12 14c-3 0-5-2-5-5V4M7 8L4 6M7 11l-3-1M12 14c3 0 5-2 5-5V4M17 8l3-2M17 11l3-1', ph: 'Date, species, buck/doe, points, weight, hunter…' },
   general: { label: 'Marker', color: '#7048e8', path: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z' },
 };
 let markers = mkLoad(), mkVis = mkLoadVis(), mkEdit = null, mkArmed = false, mkLastType = 'general';
@@ -2610,7 +2614,7 @@ function renderMarker() {
   sheet.innerHTML = `<div class="card"><h2>${mkEdit.isNew ? 'New marker' : 'Marker'}</h2>
     <div class="mktypes">${Object.entries(MK_TYPES).map(([k, t]) => `<button class="mkt${m.type === k ? ' on' : ''}" data-k="type" data-v="${k}"><i style="background:${t.color}">${mkIcon(k, 16)}</i><span>${t.label}</span></button>`).join('')}</div>
     <label class="f"><span>Name</span><div class="in"><input type="text" id="mkname" value="${esc(m.name)}" placeholder="${esc(MK_TYPES[m.type].label)}"></div></label>
-    <label class="f"><span>Notes</span><div class="in"><textarea id="mknotes" rows="3" placeholder="Height, direction, last checked…">${esc(m.notes)}</textarea></div></label>
+    <label class="f"><span>Notes</span><div class="in"><textarea id="mknotes" rows="3" placeholder="${esc((MK_TYPES[m.type] || {}).ph || 'Height, direction, last checked…')}">${esc(m.notes)}</textarea></div></label>
     ${phStrip(m, 'm')}
     <p class="note">Location: <b>${coords}</b> <button class="btn small" data-k="copy">Copy</button> · ${DRAG} the marker on the map to move it.</p>
     <div class="btns" style="margin-bottom:8px"><button class="btn small" data-k="orbit">Orbit this (POI)</button><button class="btn small" data-k="wp">Add as waypoint</button><button class="btn small" data-k="go">Center map</button></div>
@@ -2733,9 +2737,13 @@ function guessType(text) {
   const t = (text || '').toLowerCase();
   if (/stand|blind|ladder|tower|box/.test(t)) return 'stand';
   if (/feed|corn|protein/.test(t)) return 'feeder';
-  if (/cam|camera|trail ?cam/.test(t)) return 'camera';
+  if (/\bcams?\b|camera|trail ?cam/.test(t)) return 'camera';
   if (/tank|pond|water|trough|creek|well|windmill/.test(t)) return 'water';
   if (/gate/.test(t)) return 'gate';
+  if (/\bbed|bedding/.test(t)) return 'bedding';
+  if (/harvest|kill|shot|buck|doe|hog|pig|turkey|elk/.test(t)) return 'harvest';
+  if (/camp|tent|fire ?ring/.test(t)) return 'camp';
+  if (/house|cabin|barn|shed|shop|building|garage|bunk/.test(t)) return 'building';
   if (/road|crossing|culvert|bridge|trail/.test(t)) return 'crossing';
   return 'landmark';
 }
@@ -2798,7 +2806,8 @@ const SH_TYPES = {
     boundary: { label: 'Property boundary', color: '#ffd43b', fill: 0.03 },
     pasture: { label: 'Pasture / field', color: '#94d82d', fill: 0.10 },
     plot: { label: 'Food plot', color: '#40c057', fill: 0.18 },
-    bedding: { label: 'Bedding area', color: '#ff922b', fill: 0.14 },
+    bedding: { label: 'Deer bedding area', color: '#ff922b', fill: 0.14 },
+    building: { label: 'Building', color: '#adb5bd', fill: 0.35 },
     sanctuary: { label: 'Sanctuary / no hunting', color: '#fa5252', fill: 0.12, dash: '10 6' },
     water: { label: 'Water', color: '#4dabf7', fill: 0.25 },
     nofly: { label: 'No-fly zone', color: '#e03131', fill: 0.18, dash: '6 5', hz: 'nofly' },
@@ -2919,6 +2928,7 @@ function guessShapeType(kind, text) {
     if (/boundar|property|ranch|lease|line/.test(t)) return 'boundary';
     if (/plot|oats|clover|wheat/.test(t)) return 'plot';
     if (/bed/.test(t)) return 'bedding';
+    if (/house|cabin|barn|shed|shop|building|garage|bunk/.test(t)) return 'building';
     if (/sanct|no hunt|refuge/.test(t)) return 'sanctuary';
     if (/pond|tank|lake|water/.test(t)) return 'water';
     if (/pasture|field|meadow|trap/.test(t)) return 'pasture';
