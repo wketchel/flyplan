@@ -11,6 +11,7 @@
     syncInfo: function () { return JSON.stringify({ name: st.syncName || '', device: st.device || 'PC' }); },
     saveKmz: function (n, t, w) { post('saveKmz', [n, t, w]); },
     saveText: function (n, m, t) { post('saveText', [n, m, t]); },
+    saveBinary: function (n, m, b) { post('saveB64', [n, m, b]); },
     importKmz: function () { post('importFor', ['mission']); },
     importFor: function (p) { post('importFor', [p || 'mission']); },
     syncPick: function (create) { post('syncPick', [!!create]); },

@@ -489,6 +489,7 @@
       toast('Saved ' + name + ' to Downloads');
     },
     saveText(name, mime, text) { download(name, new Blob([text], { type: mime || 'text/plain' })); toast('Saved ' + name + ' to Downloads'); },
+    saveBinary(name, mime, b64) { const bin = atob(b64), u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); download(name, new Blob([u], { type: mime })); toast('Saved ' + name + ' to Downloads'); },
     importKmz() { importFor('mission'); },
     importFor(purpose) { importFor(purpose); },
     syncInfo() { return FSA ? JSON.stringify({ name: localStorage.getItem('pc.syncName') || '', device: 'PC' }) : ''; },

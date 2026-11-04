@@ -8,7 +8,7 @@ const CAMERAS = {
   wide: { label: 'Wide 24 mm (1x)', f: 24, px: 8192 },
   tele: { label: 'Medium tele 70 mm (3x)', f: 70, px: 8064 },
 };
-const APP_VERSION = '1.53';
+const APP_VERSION = '1.54';
 const MAX_ALT = 121.92;                          // 400 ft
 const HZ_DEFAULTS = { over: { top: 15.24, buf: 15.24 }, nofly: { top: 0, buf: 10 } };
 const STOP_PENALTY_S = 2.5;                      // time lost decelerating at a stop-and-turn waypoint
@@ -1050,6 +1050,7 @@ function renderMap() {
 /* ---------- toolbar ---------- */
 const LOGO_SVG = '<svg viewBox="0 0 512 512" aria-hidden="true"><defs><linearGradient id="lgbg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1f7a5a"/><stop offset="1" stop-color="#0b3a4a"/></linearGradient></defs><rect width="512" height="512" rx="112" fill="url(#lgbg)"/><path d="M96 420 V236 H156 V420 H216 V236 H276 V420" fill="none" stroke="#fff" stroke-width="30" stroke-linejoin="round" stroke-linecap="round"/><g fill="#ff8a3d" stroke="#fff" stroke-width="8"><circle cx="96" cy="420" r="26"/><circle cx="276" cy="420" r="26"/></g><g transform="translate(366 146) scale(.9)"><path d="M-46 -46 L46 46 M46 -46 L-46 46" stroke="#fff" stroke-width="18" stroke-linecap="round"/><g fill="none" stroke="#ff8a3d" stroke-width="14"><circle cx="-50" cy="-50" r="30"/><circle cx="50" cy="-50" r="30"/><circle cx="-50" cy="50" r="30"/><circle cx="50" cy="50" r="30"/></g><rect x="-24" y="-24" width="48" height="48" rx="12" fill="#fff"/></g></svg>';
 const ICON = {
+  print: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 9V3h10v6M7 17H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2"/><rect x="7" y="14" width="10" height="7" rx="1"/></svg>',
   sync: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 18a4.5 4.5 0 0 1-.6-9A6 6 0 0 1 18 9.5a4 4 0 0 1-.5 8.5"/><path d="M9.5 13.5a3 3 0 0 1 5.2-1.2M14.8 11v1.6h-1.6M14.5 15.5a3 3 0 0 1-5.2 1.2M9.2 18v-1.6h1.6"/></svg>',
   waypoint: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s-6-5.6-6-11a6 6 0 1 1 12 0c0 5.4-6 11-6 11z"/><circle cx="12" cy="10" r="2.2"/></svg>',
   rect: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="6" width="16" height="12" rx="1"/></svg>',
@@ -1074,7 +1075,7 @@ function renderTools() {
     b('polygon', 'Polygon', t === 'polygon') + b('poi', 'POI orbit', t === 'poi') + '</div>';
   if (t === 'polygon' || t === 'barea' || t === 'bline') html += '<div class="toolgroup">' + b('finish', 'Finish', false, draw.pts.length < (t === 'bline' ? 2 : 3)) + b('undo', 'Undo point', false, !draw.pts.length) + b('cancel', 'Cancel') + '</div>';
   else if (t && t !== 'measure') html += '<div class="toolgroup">' + b('cancel', 'Done') + '</div>';
-  html += '<div class="toolgroup">' + b('missions', 'Missions') + b('markers', 'Features') + b('sync', syLabel()) + b('measure', 'Measure', t === 'measure') + b('locate', 'My location') + b('layers', BASES[baseLayer].label, layerMenu) + b('offline', 'Offline maps') + b('clear', 'Clear', false, !S.wps.length && !S.shape) + '</div>';
+  html += '<div class="toolgroup">' + b('missions', 'Missions') + b('markers', 'Features') + b('sync', syLabel()) + b('measure', 'Measure', t === 'measure') + b('print', 'Print') + b('locate', 'My location') + b('layers', BASES[baseLayer].label, layerMenu) + b('offline', 'Offline maps') + b('clear', 'Clear', false, !S.wps.length && !S.shape) + '</div>';
   // The map menu opens beside the toolbar (not below it), so it never runs off the bottom of the screen.
   if (layerMenu) html += '<div class="flyout"><div class="toolgroup menu">' + Object.entries(BASES).map(([k, v]) => b('base:' + k, (k === baseLayer ? '✓ ' : '') + v.label)).join('') + '</div>' +
     '<div class="toolgroup menu">' + myMaps.map(m => b('my:' + m.id, (myState(m.id).on ? '✓ ' : '') + esc(mapTitle(m)))).join('') + b('mymaps', 'My maps…') + '</div></div>';
@@ -1097,6 +1098,7 @@ document.getElementById('tools').addEventListener('click', e => {
   const btn = e.target.closest('[data-tool]'); if (!btn || btn.disabled) return;
   if (btn.dataset.tool === 'hidetools') { setHidden('tools-hidden', true); return; }
   if (btn.dataset.tool === 'about') { openAbout(); return; }
+  if (btn.dataset.tool === 'print') { openPrint(); return; }
   const id = btn.dataset.tool;
   if (['waypoint', 'rect', 'polygon', 'poi'].includes(id)) setTool(draw && draw.tool === id ? null : id);
   else if (id === 'finish') finishPolygon();
@@ -1460,6 +1462,242 @@ function commit(fit) {
   if (multi() && S.split.on) { const n = missionParts().length; if (S.split.sel >= n) S.split.sel = -1; }
   save(); renderMap(); renderPanel(); renderTools(); airSchedule(); }
 
+/* ---------- print ----------
+   Prints what's on the map (basemap, your maps, features, the mission) on a page with a title, scale bar, north arrow
+   and legend. The map image is drawn fresh at print resolution from the same tiles and data the map uses. */
+const PAPERS = { letter: [8.5, 11], tabloid: [11, 17], legal: [8.5, 14] };
+let prs = null;
+function prLoad() { try { return Object.assign({ paper: 'letter', orient: 'landscape', route: true, features: true, labels: true, dates: false, title: '' }, JSON.parse(localStorage.getItem('planner.print')) || {}); } catch (e) { return { paper: 'letter', orient: 'landscape', route: true, features: true, labels: true, dates: false, title: '' }; } }
+function prSave() { try { const o = Object.assign({}, prs); delete o.busy; delete o.status; localStorage.setItem('planner.print', JSON.stringify(o)); } catch (e) {} }
+function openPrint() {
+  prs = prLoad(); prs.busy = false; prs.status = '';
+  if (!prs.title) prs.title = (S.wps.length || multi()) ? S.name : 'Ranch map';
+  sheetMode = 'print'; renderPrint(); sheet.hidden = false;
+}
+function renderPrint() {
+  const opt = (k, v, l) => `<button class="mkt${prs[k] === v ? ' on' : ''}" data-prs="${k}" data-v="${v}"><span>${l}</span></button>`;
+  const chk = (k, l, dis) => `<label class="chk"><input type="checkbox" data-prc="${k}"${prs[k] ? ' checked' : ''}${dis ? ' disabled' : ''}>${l}</label>`;
+  const hasRoute = S.wps.length > 1 || multi();
+  sheet.innerHTML = `<div class="card"><h2>Print map</h2>
+    <p class="note">Prints the area showing on the map now, widened to fit the page. Move and zoom the map first to frame what you want.</p>
+    <label class="f"><span>Title</span><div class="in"><input type="text" id="prtitle" value="${esc(prs.title)}"></div></label>
+    <div class="mktypes">${opt('paper', 'letter', 'Letter 8.5×11')}${opt('paper', 'legal', 'Legal 8.5×14')}${opt('paper', 'tabloid', 'Tabloid 11×17')}</div>
+    <div class="mktypes">${opt('orient', 'landscape', 'Landscape')}${opt('orient', 'portrait', 'Portrait')}</div>
+    ${chk('features', 'Markers, boundaries, lines and hazards')}
+    ${chk('labels', 'Names', !prs.features)}
+    ${chk('route', 'Mission route', !hasRoute)}
+    ${myMaps.length ? chk('dates', 'Outlines and dates of your maps') : ''}
+    ${prs.status ? `<div class="status${prs.bad ? ' bad' : ''}">${esc(prs.status)}</div>` : ''}
+    <div class="btns"><button class="btn" data-prs="close">Close</button><button class="btn" data-prs="image"${prs.busy ? ' disabled' : ''}>Save image</button><button class="btn primary" data-prs="print"${prs.busy ? ' disabled' : ''}>${prs.busy ? 'Preparing…' : 'Print…'}</button></div>
+    <p class="note" style="margin-top:8px">To make a PDF, print and choose ${native && !DESKTOP ? '<b>Save as PDF</b>' : '<b>Microsoft Print to PDF</b> (or <b>Save as PDF</b>)'} as the printer.</p></div>`;
+}
+function printClick(e) {
+  if (e.target === sheet) { sheet.hidden = true; return; }
+  const c = e.target.closest('input[data-prc]');
+  if (c) { prs[c.dataset.prc] = c.checked; prSave(); renderPrint(); return; }
+  const b = e.target.closest('[data-prs]'); if (!b || b.disabled) return;
+  const t = sheet.querySelector('#prtitle'); if (t) prs.title = t.value;
+  const k = b.dataset.prs;
+  if (k === 'close') { sheet.hidden = true; return; }
+  if (k === 'paper' || k === 'orient') { prs[k] = b.dataset.v; prSave(); renderPrint(); return; }
+  if (k === 'print' || k === 'image') {
+    prs.busy = true; prs.status = 'Drawing the map at print quality…'; prs.bad = false; renderPrint(); prSave();
+    prBuild().then(out => {
+      prs.busy = false; prs.status = out.missing ? `${out.missing} map tile${out.missing === 1 ? '' : 's'} couldn't be loaded and are blank. If you're offline, download the area in Offline maps first.` : ''; prs.bad = !!out.missing;
+      renderPrint();
+      if (k === 'image') prSaveImage(out); else prPrint(out);
+    }).catch(err => { prs.busy = false; prs.status = 'Could not prepare the map: ' + ((err && err.message) || err); prs.bad = true; renderPrint(); });
+  }
+}
+/* ----- drawing ----- */
+function prImg(src, blob) {
+  return new Promise(res => {
+    const img = new Image(); img.crossOrigin = 'anonymous';
+    img.onload = () => res(img); img.onerror = () => res(null);
+    img.src = src;
+    setTimeout(() => res(null), 20000);
+  });
+}
+async function prTile(src) {
+  // src: { url } or { blob: () => Promise<Blob|null> }
+  if (src.url) return prImg(src.url);
+  const b = await src.blob().catch(() => null); if (!b) return null;
+  const u = URL.createObjectURL(b), img = await prImg(u); URL.revokeObjectURL(u); return img;
+}
+function prTileLayers() {
+  const out = [], base = BASES[baseLayer].layer;
+  const subs = base.getLayers ? base.getLayers() : [base];
+  subs.forEach(l => { if (l._url) out.push({ kind: 'url', layer: l, opacity: 1, min: l.options.minNativeZoom || 0, max: l.options.maxNativeZoom || 19 }); });
+  myMaps.forEach(m => {
+    const st = myState(m.id), l = myLayers[m.id];
+    if (!st.on || !l || m.missing || m.locked) return;
+    out.push({ kind: PC ? 'pc' : 'url', layer: l, map: m, opacity: st.opacity, min: m.minzoom, max: m.maxzoom, bounds: m.bounds ? L.latLngBounds(myBounds(m)) : null });
+  });
+  return out;
+}
+function niceScale(m) {   // a round length near m metres, in the user's units
+  if (imp()) {
+    const ft = m * FT, steps = [50, 100, 200, 250, 500, 1000, 2000, 2640, 5280, 10560, 26400, 52800];
+    let best = steps[0]; steps.forEach(s => { if (s <= ft) best = s; });
+    return { m: best / FT, label: best >= 2640 ? (best / 5280) + ' mi' : best.toLocaleString() + ' ft' };
+  }
+  const steps = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
+  let best = steps[0]; steps.forEach(s => { if (s <= m) best = s; });
+  return { m: best, label: best >= 1000 ? (best / 1000) + ' km' : best + ' m' };
+}
+async function prBuild() {
+  const [pw, ph] = PAPERS[prs.paper] || PAPERS.letter, land = prs.orient === 'landscape';
+  const pageW = land ? ph : pw, pageH = land ? pw : ph;
+  const mapWin = pageW - 0.8, mapHin = pageH - 0.8 - 1.45;    // margins, header and legend
+  const aspect = mapWin / mapHin;
+  // frame: the current view widened to the page's shape
+  const size = map.getSize(), z = map.getZoom(), center = map.getCenter();
+  let vw = size.x, vh = size.y;
+  if (vw / vh < aspect) vw = vh * aspect; else vh = vw / aspect;
+  const dpi = Math.min(220, 3600 / mapWin), CW = Math.round(mapWin * dpi), CH = Math.round(mapHin * dpi);
+  const zp = z + Math.log2(CW / vw);                       // zoom at which the canvas has one pixel per map pixel
+  const cv = document.createElement('canvas'); cv.width = CW; cv.height = CH;
+  const g = cv.getContext('2d');
+  g.fillStyle = '#e9ecef'; g.fillRect(0, 0, CW, CH);
+  const c0 = map.project(center, zp), ox = c0.x - CW / 2, oy = c0.y - CH / 2;
+  const P = ll => { const p = map.project(L.latLng(ll[0], ll[1]), zp); return [p.x - ox, p.y - oy]; };
+  const nw = map.unproject(L.point(ox, oy), zp), se = map.unproject(L.point(ox + CW, oy + CH), zp), view = L.latLngBounds(se, nw);
+  // tiles
+  let missing = 0;
+  for (const src of prTileLayers()) {
+    if (src.bounds && !src.bounds.intersects(view)) continue;
+    const tz = Math.max(src.min, Math.min(src.max, Math.round(zp)));
+    const sc = Math.pow(2, zp - tz), T = 256 * sc;
+    const a = map.project(nw, tz).divideBy(256).floor(), bb = map.project(se, tz).divideBy(256).floor();
+    if ((bb.x - a.x + 1) * (bb.y - a.y + 1) > 1600) continue;  // far too many tiles for this layer's zoom range
+    const jobs = [];
+    for (let x = a.x; x <= bb.x; x++) for (let y = a.y; y <= bb.y; y++) {
+      if (src.bounds) { const tb = L.latLngBounds(map.unproject(L.point(x * 256, (y + 1) * 256), tz), map.unproject(L.point((x + 1) * 256, y * 256), tz)); if (!tb.intersects(src.bounds)) continue; }
+      const n = Math.pow(2, tz), xx = ((x % n) + n) % n;
+      let s;
+      if (src.kind === 'pc') s = { blob: () => window.PcHost.tileBlob(src.map.id, tz, xx, y) };
+      else { const l = src.layer, sub = l.options.subdomains; s = { url: L.Util.template(l._url, Object.assign({}, l.options, { x: xx, y, z: tz, s: sub && sub.length ? sub[Math.abs(xx + y) % sub.length] : '', r: '' })) }; }
+      jobs.push({ x, y, s });
+    }
+    let i = 0;
+    const tiles = [];
+    await Promise.all([0, 1, 2, 3, 4, 5, 6, 7].map(async () => { while (i < jobs.length) { const j = jobs[i++]; const img = await prTile(j.s); if (!img) { if (!src.map) missing++; continue; } tiles.push([j, img]); } }));
+    g.globalAlpha = src.opacity;
+    tiles.forEach(([j, img]) => { const px = j.x * T - ox, py = j.y * T - oy; g.drawImage(img, Math.floor(px), Math.floor(py), Math.ceil(T) + 1, Math.ceil(T) + 1); });
+    g.globalAlpha = 1;
+  }
+  const k = dpi / 110;                                     // size of symbols relative to the screen
+  const legend = { mk: new Set(), sh: new Set(), route: false, maps: [] };
+  const inView = pts => pts.some(p => view.contains(p));
+  // your maps' outlines and dates
+  if (prs.dates) myMaps.forEach(m => {
+    const c = covCache[m.id]; if (!c || !c.loops || !myState(m.id).on) return;
+    if (!c.loops.some(inView)) return;
+    const col = mapColor(m);
+    c.loops.forEach(lp => { g.beginPath(); lp.forEach((p, i) => { const q = P(p); i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1]); }); g.closePath(); g.lineWidth = 2.5 * k; g.strokeStyle = col; g.stroke(); });
+  });
+  myMaps.forEach(m => { if (myState(m.id).on && m.bounds && L.latLngBounds(myBounds(m)).intersects(view)) legend.maps.push(`${esc(mapTitle(m))} (${esc(fmtMapDate(mapDate(m).date))})`); });
+  // boundaries, lines and hazards
+  const labels = [];
+  if (prs.features && mkVis.shapes !== false) shapes.forEach(s => {
+    if (!s.pts || s.pts.length < 2 || !inView(s.pts)) return;
+    const t = shType(s); legend.sh.add(s.kind + ':' + s.type);
+    g.beginPath(); s.pts.forEach((p, i) => { const q = P(p); i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1]); });
+    if (s.kind === 'area') { g.closePath(); g.fillStyle = t.color + Math.round((t.fill || 0.1) * 255).toString(16).padStart(2, '0'); g.fill(); }
+    g.setLineDash(t.dash ? t.dash.split(' ').map(v => v * k) : []);
+    g.lineWidth = 4.5 * k; g.strokeStyle = 'rgba(0,0,0,.45)'; g.stroke();
+    g.lineWidth = 2.6 * k; g.strokeStyle = t.color; g.stroke(); g.setLineDash([]);
+    if (prs.labels && s.name) { const at = s.kind === 'area' ? centroid(s.pts) : s.pts[Math.floor((s.pts.length - 1) / 2)]; labels.push([P(at), s.name, t.color, 0]); }
+  });
+  // mission route
+  if (prs.route && (S.wps.length > 1 || multi())) {
+    const mp = missionPoints(), pts = mp.map(p => [p.w.lat, p.w.lng]);
+    if (pts.length > 1) {
+      legend.route = true;
+      g.lineJoin = 'round'; g.lineCap = 'round';
+      g.beginPath(); pts.forEach((p, i) => { const q = P(p); i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1]); });
+      g.lineWidth = 5.5 * k; g.strokeStyle = '#fff'; g.stroke(); g.lineWidth = 3 * k; g.strokeStyle = '#ff7a2e'; g.stroke();
+      const dot = (p, col, txt) => { const [x, y] = P(p); g.beginPath(); g.arc(x, y, 9 * k, 0, 7); g.fillStyle = col; g.fill(); g.lineWidth = 2 * k; g.strokeStyle = '#fff'; g.stroke(); g.fillStyle = '#fff'; g.font = `700 ${10 * k}px sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(txt, x, y + 0.5); };
+      dot(pts[0], '#2b8a3e', 'S'); dot(pts[pts.length - 1], '#c92a2a', 'E');
+    }
+  }
+  // markers
+  if (prs.features && mkVis.all) markers.forEach(m => {
+    if (mkVis.hidden[m.type] || !view.contains([m.lat, m.lng])) return;
+    const t = MK_TYPES[m.type] || MK_TYPES.general, [x, y] = P([m.lat, m.lng]), r = 11 * k;
+    legend.mk.add(m.type in MK_TYPES ? m.type : 'general');
+    g.beginPath(); g.arc(x, y, r, 0, 7); g.fillStyle = t.color; g.fill(); g.lineWidth = 2.2 * k; g.strokeStyle = '#fff'; g.stroke();
+    g.save(); g.translate(x - r * 0.72, y - r * 0.72); g.scale(r * 1.44 / 24, r * 1.44 / 24); g.lineWidth = 2.4; g.strokeStyle = '#fff'; g.lineCap = 'round'; g.lineJoin = 'round'; g.stroke(new Path2D(t.path)); g.restore();
+    if (prs.labels && m.name) labels.push([[x, y], m.name, '#fff', r + 4 * k]);
+  });
+  // labels on top, with a dark halo
+  g.textAlign = 'center'; g.textBaseline = 'top'; g.font = `700 ${11.5 * k}px sans-serif`; g.lineJoin = 'round';
+  labels.forEach(([[x, y], txt, col, dy]) => { g.lineWidth = 3.5 * k; g.strokeStyle = 'rgba(0,0,0,.8)'; g.strokeText(txt, x, y + dy); g.fillStyle = col === '#fff' ? '#fff' : '#fff'; g.fillText(txt, x, y + dy); });
+  // north arrow and scale bar
+  const box = (x, y, w, h) => { g.fillStyle = 'rgba(255,255,255,.88)'; g.strokeStyle = 'rgba(0,0,0,.35)'; g.lineWidth = 1 * k; g.beginPath(); g.rect(x, y, w, h); g.fill(); g.stroke(); };
+  const na = 26 * k, nx = CW - na - 14 * k, ny = 14 * k;
+  box(nx, ny, na, na * 1.35);
+  g.fillStyle = '#111'; g.beginPath(); g.moveTo(nx + na / 2, ny + 6 * k); g.lineTo(nx + na * 0.78, ny + na * 0.95); g.lineTo(nx + na / 2, ny + na * 0.78); g.lineTo(nx + na * 0.22, ny + na * 0.95); g.closePath(); g.fill();
+  g.font = `800 ${10 * k}px sans-serif`; g.textAlign = 'center'; g.textBaseline = 'alphabetic'; g.fillText('N', nx + na / 2, ny + na * 1.27);
+  const mpp = 40075016.686 * Math.cos(center.lat * Math.PI / 180) / (256 * Math.pow(2, zp)), ns = niceScale(CW * 0.22 * mpp), bw = ns.m / mpp;
+  box(14 * k, CH - 34 * k, bw + 20 * k, 24 * k);
+  g.fillStyle = '#111'; g.fillRect(24 * k, CH - 20 * k, bw / 2, 4 * k); g.strokeStyle = '#111'; g.lineWidth = 1.2 * k; g.strokeRect(24 * k, CH - 20 * k, bw, 4 * k);
+  g.font = `700 ${9.5 * k}px sans-serif`; g.textAlign = 'left'; g.fillText('0', 22 * k, CH - 23 * k); g.textAlign = 'right'; g.fillText(ns.label, 24 * k + bw + 4 * k, CH - 23 * k);
+  return { canvas: cv, missing, legend, view, pageW, pageH, mapWin, mapHin, center, scale: ns.label };
+}
+function prLegendHtml(out) {
+  const L2 = out.legend, items = [];
+  if (L2.route) items.push(`<span class="li"><i style="background:#ff7a2e;height:4px;width:18px;border-radius:2px"></i>Mission: ${esc(S.name)}</span>`);
+  Object.keys(MK_TYPES).forEach(k => { if (!L2.mk.has(k)) return; const t = MK_TYPES[k]; items.push(`<span class="li"><i class="dot" style="background:${t.color}">${mkIcon(k, 10)}</i>${esc(t.label)}</span>`); });
+  ['area', 'line'].forEach(kind => Object.keys(SH_TYPES[kind]).forEach(k => { if (!L2.sh.has(kind + ':' + k)) return; const t = SH_TYPES[kind][k]; items.push(`<span class="li"><i style="border:2px ${t.dash ? 'dashed' : 'solid'} ${t.color};${kind === 'area' ? `background:${t.color}33;width:14px;height:10px` : 'width:18px;height:0;border-width:2px 0 0'}"></i>${esc(t.label)}</span>`); }));
+  return items.join('');
+}
+function prHtml(out) {
+  const img = out.canvas.toDataURL('image/jpeg', 0.9), d = new Date();
+  const base = { sat: 'Esri World Imagery (Maxar, Earthstar Geographics)', usgs: 'USGS The National Map', street: 'Esri World Street Map' }[baseLayer] || '';
+  const c = out.center;
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(prs.title || 'FlyPlan map')}</title><style>
+@page { size: ${prs.paper === 'tabloid' ? '11in 17in' : prs.paper === 'legal' ? '8.5in 14in' : '8.5in 11in'} ${prs.orient}; margin: 0.4in; }
+* { box-sizing: border-box; } html, body { margin: 0; padding: 0; background: #fff; color: #111; font: 10pt/1.3 Arial, Helvetica, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.page { width: ${out.pageW - 0.8}in; }
+h1 { font-size: 16pt; margin: 0; } .sub { color: #555; font-size: 9pt; margin: 2px 0 6px; display: flex; justify-content: space-between; }
+.map { display: block; width: ${out.mapWin}in; height: ${out.mapHin}in; border: 1px solid #333; }
+.leg { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 8.5pt; }
+.li { display: inline-flex; align-items: center; gap: 5px; } .li i { display: inline-block; flex: 0 0 auto; }
+.li i.dot { width: 14px; height: 14px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; }
+.foot { margin-top: 4px; color: #666; font-size: 7.5pt; }
+</style></head><body><div class="page">
+<h1>${esc(prs.title || 'Map')}</h1>
+<div class="sub"><span>Printed ${d.toLocaleDateString([], { year: 'numeric', month: 'long', day: 'numeric' })} · Center ${c.lat.toFixed(5)}, ${c.lng.toFixed(5)} · Scale bar ${esc(out.scale)}</span><span>FlyPlan</span></div>
+<img class="map" src="${img}" alt="">
+<div class="leg">${prLegendHtml(out)}</div>
+<div class="foot">Imagery: ${esc(base)}${out.legend.maps.length ? '; your maps: ' + out.legend.maps.join(', ') : ''}. Not for navigation; check airspace before flying.</div>
+</div></body></html>`;
+}
+function prPrint(out) {
+  const html = prHtml(out);
+  if (native && native.printHtml) { native.printHtml(html, prs.title || 'FlyPlan map'); return; }
+  let fr = document.getElementById('printframe'); if (fr) fr.remove();
+  fr = document.createElement('iframe'); fr.id = 'printframe';
+  fr.style.cssText = 'position:fixed;right:0;bottom:0;width:1px;height:1px;border:0;opacity:0';
+  document.body.appendChild(fr);
+  const d = fr.contentWindow.document; d.open(); d.write(html); d.close();
+  const go = () => { try { fr.contentWindow.focus(); fr.contentWindow.print(); } catch (e) { toast('Printing failed here. Use Save image instead.'); } };
+  const im = d.querySelector('img'); if (im && !im.complete) im.onload = () => setTimeout(go, 50); else setTimeout(go, 50);
+}
+function prSaveImage(out) {
+  // the map with a title band, as a PNG/JPEG file
+  const cv = out.canvas, W = cv.width, band = Math.round(W * 0.045), c2 = document.createElement('canvas');
+  c2.width = W; c2.height = cv.height + band;
+  const g = c2.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, W, c2.height);
+  g.fillStyle = '#111'; g.font = `700 ${band * 0.5}px sans-serif`; g.textBaseline = 'middle'; g.fillText(prs.title || 'Map', band * 0.3, band / 2);
+  g.font = `500 ${band * 0.3}px sans-serif`; g.textAlign = 'right'; g.fillStyle = '#555'; g.fillText(new Date().toLocaleDateString() + ' · FlyPlan', W - band * 0.3, band / 2);
+  g.drawImage(cv, 0, band);
+  const name = (prs.title || 'map').replace(/[\\/:*?"<>|]+/g, '').trim() + '.jpg', b64 = c2.toDataURL('image/jpeg', 0.92).split(',')[1];
+  if (native && native.saveBinary) native.saveBinary(name, 'image/jpeg', b64);
+  else { const a = document.createElement('a'); a.href = 'data:image/jpeg;base64,' + b64; a.download = name; document.body.appendChild(a); a.click(); a.remove(); }
+}
+
 /* ---------- about ---------- */
 function openAbout() {
   sheetMode = 'about';
@@ -1648,6 +1886,7 @@ sheet.addEventListener('click', e => {
   if (sheetMode === 'markers') { markerListClick(e); return; }
   if (sheetMode === 'shape') { shapeClick(e); return; }
   if (sheetMode === 'hfind') { hfClick(e); return; }
+  if (sheetMode === 'print') { printClick(e); return; }
   if (sheetMode === 'sync') { syncClick(e); return; }
   if (e.target === sheet) { if (send.step !== 'sending') sheet.hidden = true; return; }
   const r = e.target.closest('input[name=pm]');
@@ -2582,15 +2821,19 @@ function mkIcon(type, size) {
   const t = MK_TYPES[type] || MK_TYPES.general;
   return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="${t.path}"/></svg>`;
 }
+const CAN_HOVER = !!(window.matchMedia && matchMedia('(hover: hover)').matches);
+let mkPeek = null;
+map.on('click movestart', () => { if (mkPeek) { mkPeek = null; renderMarkers(); } });
 function renderMarkers() {
   mkLayer.clearLayers();
   if (!mkVis.all) return;
   markers.forEach(m => {
     if (mkVis.hidden[m.type]) return;
     const t = MK_TYPES[m.type] || MK_TYPES.general;
-    const html = `<div class="mk"><i style="background:${t.color}">${mkIcon(m.type, 16)}${m.photos && m.photos.length ? '<em class="mkph"></em>' : ''}</i>${mkVis.labels && m.name ? `<b>${esc(m.name)}</b>` : ''}</div>`;
-    const mk = L.marker([m.lat, m.lng], { draggable: !featuresLocked(), interactive: !featuresLocked(), zIndexOffset: 800, icon: L.divIcon({ className: '', html, iconSize: [160, 44], iconAnchor: [80, 14] }) }).addTo(mkLayer);
-    mk.on('click', () => openMarker(m.id));
+    const html = `<div class="mk${mkPeek === m.id ? ' peek' : ''}"><i style="background:${t.color}">${mkIcon(m.type, 16)}${m.photos && m.photos.length ? '<em class="mkph"></em>' : ''}</i>${mkVis.labels && m.name ? `<b>${esc(m.name)}</b>` : ''}</div>`;
+    const mk = L.marker([m.lat, m.lng], { draggable: !featuresLocked(), interactive: !featuresLocked(), zIndexOffset: 800, icon: L.divIcon({ className: '', html, iconSize: [28, 28], iconAnchor: [14, 14] }) }).addTo(mkLayer);
+    // Marker names appear on hover (mouse) or after a first tap (touch); the next tap opens the marker.
+    mk.on('click', () => { if (!CAN_HOVER && mkVis.labels && m.name && mkPeek !== m.id) { mkPeek = m.id; renderMarkers(); return; } mkPeek = null; openMarker(m.id); });
     mk.on('dragend', e => { m.lat = e.target.getLatLng().lat; m.lng = e.target.getLatLng().lng; mkSave(); });
   });
 }

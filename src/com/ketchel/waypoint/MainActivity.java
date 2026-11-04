@@ -44,6 +44,7 @@ public class MainActivity extends Activity {
     static final int REQ_MEDIALOC = 48;
 
     WebView web;
+    WebView printView;   // kept alive while a print job runs
     Handler main;
     UsbManager usb;
     Runnable pendingUsbAction;
@@ -390,6 +391,41 @@ public class MainActivity extends Activity {
                     i.setType(mime);
                     i.putExtra(Intent.EXTRA_TITLE, name);
                     startActivityForResult(i, REQ_SAVE);
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void saveBinary(final String name, final String mime, final String b64) {
+            try { pendingSave = android.util.Base64.decode(b64, android.util.Base64.DEFAULT); } catch (Exception e) { return; }
+            main.post(new Runnable() {
+                public void run() {
+                    Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+                    i.addCategory(Intent.CATEGORY_OPENABLE);
+                    i.setType(mime);
+                    i.putExtra(Intent.EXTRA_TITLE, name);
+                    startActivityForResult(i, REQ_SAVE);
+                }
+            });
+        }
+
+        /** Prints an HTML page (the map printout) through Android's print system, which also offers Save as PDF. */
+        @JavascriptInterface
+        public void printHtml(final String html, final String job) {
+            main.post(new Runnable() {
+                public void run() {
+                    final WebView pw = new WebView(MainActivity.this);
+                    printView = pw;
+                    pw.getSettings().setJavaScriptEnabled(false);
+                    pw.setWebViewClient(new WebViewClient() {
+                        @Override public void onPageFinished(WebView v, String url) {
+                            try {
+                                android.print.PrintManager pm = (android.print.PrintManager) getSystemService(Context.PRINT_SERVICE);
+                                pm.print(job == null || job.length() == 0 ? "FlyPlan map" : job, v.createPrintDocumentAdapter(job), new android.print.PrintAttributes.Builder().build());
+                            } catch (Exception e) { emit(obj("type", "toast", "message", "Printing isn't available: " + e.getMessage())); }
+                        }
+                    });
+                    pw.loadDataWithBaseURL("https://print.invalid/", html, "text/html", "UTF-8", null);
                 }
             });
         }

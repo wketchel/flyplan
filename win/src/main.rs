@@ -198,6 +198,12 @@ mod app {
                 let Some(p) = c.dialog().set_title("Save").set_file_name(&name).add_filter(&ext.to_uppercase(), &[ext.as_str()]).save_file() else { return };
                 match std::fs::write(&p, arg(a, 2)) { Ok(_) => c.toast(&format!("Saved {}", file_name(&p))), Err(e) => c.toast(&format!("Could not save: {e}")) }
             }
+            "saveB64" => {
+                let name = arg(a, 0);
+                let ext = Path::new(&name).extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_else(|| "bin".into());
+                let Some(p) = c.dialog().set_title("Save").set_file_name(&name).add_filter(&ext.to_uppercase(), &[ext.as_str()]).save_file() else { return };
+                match std::fs::write(&p, core::b64decode(&arg(a, 2)).unwrap_or_default()) { Ok(_) => c.toast(&format!("Saved {}", file_name(&p))), Err(e) => c.toast(&format!("Could not save: {e}")) }
+            }
             "importFor" => {
                 let purpose = arg(a, 0);
                 let Some(p) = c.dialog().set_title("Import").add_filter("Maps and missions", &["kmz", "kml", "gpx", "wpml"]).add_filter("All files", &["*"]).pick_file() else { return };
