@@ -8,7 +8,7 @@ const CAMERAS = {
   wide: { label: 'Wide 24 mm (1x)', f: 24, px: 8192 },
   tele: { label: 'Medium tele 70 mm (3x)', f: 70, px: 8064 },
 };
-const APP_VERSION = '1.50';
+const APP_VERSION = '1.51';
 const MAX_ALT = 121.92;                          // 400 ft
 const HZ_DEFAULTS = { over: { top: 15.24, buf: 15.24 }, nofly: { top: 0, buf: 10 } };
 const STOP_PENALTY_S = 2.5;                      // time lost decelerating at a stop-and-turn waypoint
@@ -598,6 +598,29 @@ function demLoad(k) {
   img.src = DEM_URL(DEM_Z, x, y);
 }
 function demChanged() { clearTimeout(demTimer); demTimer = setTimeout(() => { commit(false); if (typeof meas !== 'undefined' && meas.active) renderMeasure(); }, 150); }
+/* Highest (and lowest) ground inside the survey area, from the USGS elevation data. Helps pick a takeoff spot. */
+let hiCache = { key: '', res: null };
+function surveyHigh() {
+  if (S.mode !== 'grid' || !S.shape || S.shape.type !== 'polygon' || S.shape.pts.length < 3) return null;
+  const P = S.shape.pts, key = JSON.stringify(P);
+  if (hiCache.key === key && hiCache.res) return hiCache.res;
+  const la = P.map(p => p[0]), ln = P.map(p => p[1]);
+  const st = demEnsure(Math.min(...la), Math.min(...ln), Math.max(...la), Math.max(...ln));
+  if (st !== 'ok') return { state: st };
+  const pr = projector(centroid(P)), Px = P.map(pr.xy);
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  Px.forEach(([x, y]) => { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); });
+  const step = Math.max(8, Math.max(x1 - x0, y1 - y0) / 140);
+  let hi = -Infinity, lo = Infinity, at = null, n = 0;
+  const probe = (x, y) => { if (!hzInside([x, y], Px)) return; const ll = pr.ll([x, y]), e = elevAt(ll[0], ll[1]); if (e == null) return; n++; if (e > hi) { hi = e; at = [x, y]; } if (e < lo) lo = e; };
+  for (let x = x0 + step / 2; x < x1; x += step) for (let y = y0 + step / 2; y < y1; y += step) probe(x, y);
+  if (!at) return (hiCache = { key, res: { state: 'missing' } }).res;
+  const [cx, cy] = at;   // refine around the best sample
+  for (let x = cx - step; x <= cx + step; x += step / 6) for (let y = cy - step; y <= cy + step; y += step / 6) probe(x, y);
+  const res = { state: 'ok', hi, lo, at: pr.ll(at).map(v => +v.toFixed(6)) };
+  hiCache = { key, res };
+  return res;
+}
 /* Make sure every tile under a lat/lng box (plus a pixel of margin) is loaded: 'ok', 'loading' or 'missing'. */
 function demEnsure(s, w, n, e) {
   const [x1, y1] = demPixel(n, w), [x2, y2] = demPixel(s, e);
@@ -946,6 +969,16 @@ function renderMap() {
     L.marker(S.poiCenter, { interactive: false, icon: L.divIcon({ className: '', html: '<div class="poim">POI</div>', iconSize: [30, 30], iconAnchor: [15, 15] }) }).addTo(shapeLayer);
   }
   const W = S.wps;
+  const hp = surveyHigh();
+  if (hp && hp.state === 'ok') {
+    const tk = S.terrain && S.terrain.takeoff, isTk = tk && hav(tk, hp.at) < 5, rel = hp.hi - hp.lo;
+    const over = !S.terrain.on && S.alt + rel > MAX_ALT + 0.5;
+    const hm = L.marker(hp.at, { zIndexOffset: 1400, title: 'Highest ground in the survey', icon: L.divIcon({ className: '', html: '<div class="himk"><svg viewBox="0 0 24 24"><path d="M2 20 9 7l4 6 3-4 6 11z" fill="currentColor"/></svg></div>', iconSize: [26, 26], iconAnchor: [13, 13] }) }).addTo(shapeLayer);
+    hm.bindPopup(`<div class="hzpop"><b>Highest ground in this survey</b>${fmtLen(hp.hi)} above sea level. The lowest is ${fmtLen(hp.lo)}, ${fmtLen(rel)} lower.
+      <small>${S.terrain.on ? 'Terrain following keeps a steady height above the ground wherever you take off.' : `Taking off here keeps the drone at least ${fmtLen(S.alt)} above the ground everywhere in the survey${over ? `, but over the lowest ground it would be ${fmtLen(S.alt + rel)} up, over 400 ft. Lower the altitude or turn on Terrain following.` : '.'}`} Elevation data is bare ground (about 30 ft detail), not trees.</small>
+      ${isTk ? '<small><b>This is your takeoff spot.</b></small>' : '<button class="btn small primary hiuse" style="margin-top:8px">Use as takeoff spot</button>'}</div>`, { closeButton: false, offset: [0, -8] });
+    hm.on('popupopen', ev => { const btn = ev.popup.getElement().querySelector('.hiuse'); if (btn) btn.onclick = () => { S.terrain.takeoff = hp.at.slice(); map.closePopup(); commit(false); toast('Takeoff spot set to the high point' + (S.terrain.on ? '' : '. It’s used for hazard heights; turn on Terrain following to use it for the whole survey.')); }; });
+  }
   if (S.terrain.on && S.terrain.takeoff) {
     const tm = L.marker(S.terrain.takeoff, { draggable: !featuresLocked(), interactive: !featuresLocked(), zIndexOffset: 1500, icon: L.divIcon({ className: '', html: '<div class="tkm">T</div>', iconSize: [30, 30], iconAnchor: [15, 15] }) }).addTo(routeLayer);
     tm.on('dragend', e => { S.terrain.takeoff = [e.target.getLatLng().lat, e.target.getLatLng().lng]; commit(false); });
@@ -1183,6 +1216,7 @@ function renderPanel() {
         <span>Photo footprint</span><b>${fmtLen(cov.across)} × ${fmtLen(cov.along)}</b>
         <span>Ground resolution</span><b>${imp() ? (Math.round(cov.gsd / 2.54 * 100) / 100) + ' in/px' : r1(cov.gsd) + ' cm/px'}</b>
         <span>Area</span><b>${gridInfo ? (imp() ? r1(gridInfo.area / 4046.86) + ' acres' : r1(gridInfo.area / 10000) + ' ha') : '—'}</b>
+        ${(() => { const hp = surveyHigh(); return hp && hp.state === 'ok' ? `<span>Ground elevation</span><b>${fmtLen(hp.lo)} – ${fmtLen(hp.hi)}</b>` : ''; })()}
         ${gridInfo && gridInfo.skipped ? `<span>Left out (already mapped)</span><b>${imp() ? r1(gridInfo.skipped / 4046.86) + ' acres' : r1(gridInfo.skipped / 10000) + ' ha'}</b>` : ''}
       </div>
       ${skipPanel()}
