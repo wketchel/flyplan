@@ -8,7 +8,7 @@ const CAMERAS = {
   wide: { label: 'Wide 24 mm (1x)', f: 24, px: 8192 },
   tele: { label: 'Medium tele 70 mm (3x)', f: 70, px: 8064 },
 };
-const APP_VERSION = '1.61';
+const APP_VERSION = '1.62';
 const MAX_ALT = 121.92;                          // 400 ft
 const HZ_DEFAULTS = { over: { top: 15.24, buf: 15.24 }, nofly: { top: 0, buf: 10 } };
 const STOP_PENALTY_S = 2.5;                      // time lost decelerating at a stop-and-turn waypoint
@@ -23,6 +23,10 @@ if (L.Draggable) {
   const onDown = L.Draggable.prototype._onDown;
   L.Draggable.prototype._onDown = function (e) {
     const onMarker = this._element && this._element.classList && this._element.classList.contains('leaflet-marker-icon');
+    // Leaflet remembers "this item was just dragged" until its next drag starts, and ignores taps on it meanwhile.
+    // Gestures this patch turns away never reach Leaflet's own handler, so clear that flag here or a moved marker
+    // could never be tapped open again.
+    if (onMarker) this._moved = false;
     if (onMarker && e.type === 'mousedown' && DESKTOP) {
       if (e.button !== 2) return;                     // left button: let the map pan instead
       window.__rightDrag = Date.now();
@@ -3393,7 +3397,7 @@ function renderMarker() {
   const coords = m.lat.toFixed(6) + ', ' + m.lng.toFixed(6);
   sheet.innerHTML = `<div class="card"><h2>${mkEdit.isNew ? 'New marker' : 'Marker'}</h2>
     <div class="mktypes">${Object.entries(MK_TYPES).map(([k, t]) => `<button class="mkt${m.type === k ? ' on' : ''}" data-k="type" data-v="${k}"><i style="background:${t.color}">${mkIcon(k, 16)}</i><span>${t.label}</span></button>`).join('')}</div>
-    <label class="f"><span>Name</span><div class="in"><input type="text" id="mkname" value="${esc(m.name)}" placeholder="${esc(MK_TYPES[m.type].label)}"></div></label>
+    <label class="f"><span>Name</span><div class="in"><input type="text" id="mkname" value="${esc(m.name)}" placeholder="${esc((MK_TYPES[m.type] || MK_TYPES.general).label)}"></div></label>
     <label class="f"><span>Notes</span><div class="in"><textarea id="mknotes" rows="3" placeholder="${esc((MK_TYPES[m.type] || {}).ph || 'Height, direction, last checked…')}">${esc(m.notes)}</textarea></div></label>
     ${phStrip(m, 'm')}
     ${m.video ? `<div class="btns" style="margin:8px 0"><button class="btn small primary" data-k="video">▶ Play video at ${fmtTime(m.video.t)}</button><span class="note" style="margin:0;align-self:center">${esc(m.video.file)}</span></div>` : ''}
@@ -3407,13 +3411,13 @@ function markerClick(e) {
   const b = e.target.closest('button[data-k]'); if (!b) return;
   const m = markers.find(x => x.id === mkEdit.id); if (!m) return;
   const k = b.dataset.k;
-  if (k === 'type') { m.type = b.dataset.v; mkLastType = m.type; if (mkVis.hidden[m.type] || !mkVis.all) { delete mkVis.hidden[m.type]; mkVis.all = true; mkSaveVis(); toast(MK_TYPES[m.type].label + ' markers were hidden in Features; showing them again'); } mkSave(); renderMarkers(); renderMarker(); return; }
+  if (k === 'type') { m.type = b.dataset.v; mkLastType = m.type; if (mkVis.hidden[m.type] || !mkVis.all) { delete mkVis.hidden[m.type]; mkVis.all = true; mkSaveVis(); toast((MK_TYPES[m.type] || MK_TYPES.general).label + ' markers were hidden in Features; showing them again'); } mkSave(); renderMarkers(); renderMarker(); return; }
   if (k === 'done') { sheet.hidden = true; renderMarkers(); return; }
   if (k === 'del') { if (mkArmed) { markers = markers.filter(x => x.id !== m.id); mkSave(); renderMarkers(); sheet.hidden = true; toast('Marker deleted'); } else { mkArmed = true; renderMarker(); } return; }
   if (k === 'copy') { const t = m.lat.toFixed(6) + ', ' + m.lng.toFixed(6); try { navigator.clipboard.writeText(t).then(() => toast('Copied ' + t), () => toast(t)); } catch (err) { toast(t); } return; }
   if (k === 'go') { sheet.hidden = true; map.setView([m.lat, m.lng], Math.max(map.getZoom(), 17)); return; }
   if (k === 'video') { vrPlayMarker(m); return; }
-  if (k === 'orbit') { sheet.hidden = true; setShape({ type: 'poi', center: [m.lat, m.lng] }); toast('Orbit set around ' + (m.name || MK_TYPES[m.type].label)); return; }
+  if (k === 'orbit') { sheet.hidden = true; setShape({ type: 'poi', center: [m.lat, m.lng] }); toast('Orbit set around ' + (m.name || (MK_TYPES[m.type] || MK_TYPES.general).label)); return; }
   if (k === 'wp') { sheet.hidden = true; ensureManual(); S.wps.push(newWp([m.lat, m.lng])); S.sel = S.wps.length - 1; commit(false); toast('Added waypoint ' + S.wps.length); return; }
 }
 function markerChange(t) {
@@ -3513,7 +3517,7 @@ function markersToKml() {
     const c = t.color.replace('#', ''); const abgr = 'ff' + c.slice(4, 6) + c.slice(2, 4) + c.slice(0, 2);
     return `<Style id="${k}"><IconStyle><color>${abgr}</color><Icon><href>http://maps.google.com/mapfiles/kml/paddle/wht-blank.png</href></Icon></IconStyle></Style>`;
   }).join('\n');
-  const pms = markers.map(m => `<Placemark><name>${esc(m.name || MK_TYPES[m.type].label)}</name>${m.notes ? `<description>${esc(m.notes)}</description>` : ''}<styleUrl>#${m.type}</styleUrl>` +
+  const pms = markers.map(m => `<Placemark><name>${esc(m.name || (MK_TYPES[m.type] || MK_TYPES.general).label)}</name>${m.notes ? `<description>${esc(m.notes)}</description>` : ''}<styleUrl>#${m.type}</styleUrl>` +
     `<ExtendedData><Data name="type"><value>${m.type}</value></Data></ExtendedData><Point><coordinates>${m.lng.toFixed(7)},${m.lat.toFixed(7)},0</coordinates></Point></Placemark>`).join('\n');
   return `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>FlyPlan features</name>\n${styles}\n${pms}\n${shapesToKml()}\n</Document></kml>\n`;
 }
