@@ -8,7 +8,7 @@ const CAMERAS = {
   wide: { label: 'Wide 24 mm (1x)', f: 24, px: 8192 },
   tele: { label: 'Medium tele 70 mm (3x)', f: 70, px: 8064 },
 };
-const APP_VERSION = '1.57';
+const APP_VERSION = '1.58';
 const MAX_ALT = 121.92;                          // 400 ft
 const HZ_DEFAULTS = { over: { top: 15.24, buf: 15.24 }, nofly: { top: 0, buf: 10 } };
 const STOP_PENALTY_S = 2.5;                      // time lost decelerating at a stop-and-turn waypoint
@@ -1557,6 +1557,15 @@ function parcelTitle(a) {
   const own = String(a.OWNER_NAME || '').trim();
   return own && own !== 'Null' ? own.replace(/\b([A-Z])([A-Z]+)\b/g, (m, x, y) => x + y.toLowerCase()) : 'Parcel ' + (a.PROP_ID || '');
 }
+function llIn(ll, pts) {   // is [lat, lng] inside the polygon?
+  let c = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const a = pts[i], b = pts[j];
+    if ((a[0] > ll[0]) !== (b[0] > ll[0]) && ll[1] < (b[1] - a[1]) * (ll[0] - a[0]) / (b[0] - a[0]) + a[1]) c = !c;
+  }
+  return c;
+}
+function parcelName(a) { return parcelTitle(a) + (a.PROP_ID && a.PROP_ID !== 'Null' ? ' (' + a.PROP_ID + ')' : ''); }
 function parcelNum(v) { const n = parseFloat(v); return isFinite(n) && n > 0 ? n : null; }
 function parcelRings(geom) {   // outer rings only, as [lat, lng]
   const rings = (geom && geom.rings) || [];
@@ -1573,30 +1582,44 @@ function parcelLookup(ll) {
     if (j.error) throw new Error(j.error.message || 'lookup failed');
     const res = (j.results || []).filter(x => x.geometry && x.geometry.rings);
     if (!res.length) { L.popup({ closeButton: false }).setLatLng(ll).setContent('<div class="hzpop">No parcel found here. This lookup covers Texas only.</div>').openOn(map); return; }
-    parcelShow(res[0], ll);
+    const at = [ll.lat, ll.lng];
+    parcelShow(res.find(x => parcelRings(x.geometry).some(R => llIn(at, R))) || res[0], ll);
   }).catch(e => { if (my === parcelReq) L.popup({ closeButton: false }).setLatLng(ll).setContent(`<div class="hzpop">Couldn’t look up the parcel (${esc((e && e.message) || 'no connection')}). This needs internet.</div>`).openOn(map); });
 }
 function parcelShow(r, ll) {
   const a = r.attributes || {}, rings = parcelRings(r.geometry);
   parcelLayer.clearLayers();
   rings.forEach(R => L.polygon(R, { color: '#ffd43b', weight: 3, fillColor: '#ffd43b', fillOpacity: 0.12, dashArray: '6 5', interactive: false }).addTo(parcelLayer));
-  const src = 'parcel:' + (a.COUNTY || '') + ':' + (a.PROP_ID || a.GEO_ID || a.objectid), have = shapes.some(s => s.src === src);
+  const src = 'parcel:' + (a.COUNTY || '') + ':' + (a.PROP_ID || a.GEO_ID || a.objectid);
+  // Already imported only if a saved boundary from this parcel covers this piece (a parcel can come in separate pieces).
+  const mine = shapes.filter(s => s.src === src && s.kind === 'area' && s.pts && s.pts.length > 2);
+  const box = P => { const b = L.latLngBounds(P); return [b.getSouth(), b.getWest(), b.getNorth(), b.getEast()]; };
+  const same = (A, B) => { const a = box(A), b = box(B), ix = Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0])) * Math.max(0, Math.min(a[3], b[3]) - Math.max(a[1], b[1])),
+    u = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - ix; return u > 0 && ix / u > 0.5; };
+  const have = mine.find(s => rings.some(R => same(R, s.pts)));
   const deed = parcelNum(a.LEGAL_AREA), gis = rings.reduce((t, R) => t + shArea(R), 0) / 4046.86;
   const acres = v => v == null ? '?' : (v >= 100 ? Math.round(v) : r1(v)).toLocaleString();
   const legal = String(a.LEGAL_DESC || '').replace(/\bNull\b/g, '').trim();
   const html = `<div class="hzpop"><b>${esc(parcelTitle(a))}</b>${esc(String(a.COUNTY || '').toLowerCase().replace(/\b\w/g, c => c.toUpperCase()))} County · ID ${esc(a.PROP_ID || '')}${a.GEO_ID && a.GEO_ID !== 'Null' ? ' (' + esc(a.GEO_ID) + ')' : ''}
     <small>${deed ? acres(deed) + ' deeded acres · ' : ''}${acres(gis)} acres mapped${legal ? '<br>' + esc(legal) : ''}${a.TAX_YEAR ? '<br>Appraisal district data, ' + esc(a.TAX_YEAR) : ''}</small>
-    ${have ? '<small><b>Already in your boundaries.</b></small>' : `<button class="btn small primary paradd" style="margin-top:8px">Add as property boundary</button>`}</div>`;
+    ${have ? `<small><b>Already in your boundaries${have.name ? ' as “' + esc(have.name) + '”' : ''}.</b></small><div class="btns" style="margin-top:8px"><button class="btn small primary parshow">Show it</button><button class="btn small paradd">Import again</button></div>` : `<button class="btn small primary paradd" style="margin-top:8px">Add as property boundary</button>`}</div>`;
   const pop = L.popup({ closeButton: false, maxWidth: 280 }).setLatLng(ll).setContent(html).openOn(map);
-  const btn = pop.getElement() && pop.getElement().querySelector('.paradd');
+  const el = pop.getElement(), btn = el && el.querySelector('.paradd'), shw = el && el.querySelector('.parshow');
+  if (shw) shw.onclick = () => {
+    if (mkVis.shapes === false) { mkVis.shapes = true; mkSaveVis(); renderShapes(); }
+    parcelLayer.clearLayers(); map.closePopup(); setTool(null);
+    map.fitBounds(L.latLngBounds(have.pts), { padding: [40, 40], maxZoom: 17 });
+    openShapeEditor(have.id);
+  };
   if (btn) btn.onclick = () => {
     const t0 = Date.now();
-    rings.forEach((R, i) => shapes.push({ id: 's' + t0 + '_' + i, kind: 'area', type: 'boundary', name: parcelTitle(a) + (rings.length > 1 ? ' (' + (i + 1) + ')' : ''), src,
+    if (have) shapes = shapes.filter(s => s !== have);   // replace the old copy with a fresh one
+    rings.forEach((R, i) => shapes.push({ id: 's' + t0 + '_' + i, kind: 'area', type: 'boundary', name: have && have.name ? have.name : parcelName(a) + (rings.length > 1 ? ' part ' + (i + 1) : ''), src,
       notes: `${String(a.COUNTY || '')} County appraisal parcel ${a.PROP_ID || ''}${a.GEO_ID && a.GEO_ID !== 'Null' ? ' (' + a.GEO_ID + ')' : ''}. ${deed ? acres(deed) + ' deeded acres. ' : ''}${legal ? legal + '. ' : ''}From TxGIO StratMap Land Parcels${a.TAX_YEAR ? ' (' + a.TAX_YEAR + ')' : ''}; appraisal maps are not survey-accurate.`,
       pts: R }));
     if (mkVis.shapes === false) { mkVis.shapes = true; mkSaveVis(); }
     shSave(); renderShapes(); parcelLayer.clearLayers(); map.closePopup();
-    toast('Added ' + parcelTitle(a) + ' as a property boundary. Tap another parcel or Done.');
+    toast((have ? 'Re-imported ' : 'Added ') + parcelName(a) + ' as a property boundary. Tap another parcel or Done.');
   };
 }
 
@@ -3341,7 +3364,12 @@ const SH_TYPES = {
 let shapes = shLoad(), shEditId = null, shOpen = null, shArmed = false;
 const shpLayer = L.layerGroup().addTo(map);
 const shRenderer = L.canvas({ padding: 0.3, tolerance: 12 });
-function shLoad() { try { return JSON.parse(localStorage.getItem('planner.shapes')) || []; } catch (e) { return []; } }
+function shLoad() {
+  let a; try { a = JSON.parse(localStorage.getItem('planner.shapes')) || []; } catch (e) { a = []; }
+  // Imported parcels from 1.57 were all named after the owner; add the property ID so they can be told apart.
+  a.forEach(s => { const m = /^parcel:[^:]*:(\d+)$/.exec(s.src || ''); if (m && s.name && !s.name.includes(m[1])) { s.name += ' (' + m[1] + ')'; } });
+  return a;
+}
 let hzSig = '';
 function hzSignature() { return JSON.stringify(hzShapes().map(s => [s.id, s.hazard, s.top, s.buf, s.kind, s.pts])); }
 function shSave() { syStamp('shapes', shapes); try { localStorage.setItem('planner.shapes', JSON.stringify(shapes)); } catch (e) { toast('Could not save: storage is full'); } const sig = hzSignature(); if (sig !== hzSig) { hzSig = sig; hzChanged(); } }
