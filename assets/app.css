@@ -357,3 +357,16 @@ select option:disabled { color: var(--muted); }
 .vrdrone i{font-style:normal;color:#fff;font-size:15px;line-height:1;display:block}
 .vrstart{width:20px;height:20px;border-radius:50%;background:#4dabf7;color:#fff;border:2px solid #fff;font-size:9px;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 4px rgba(0,0,0,.4)}
 @media (orientation: portrait){.vrpanel{left:56px;right:10px;width:auto;bottom:10px}.vrbody{padding:6px 8px 4px}.vrbody video{max-height:150px;width:auto;max-width:100%;margin:0 auto}.vrbody .note{display:none}.vrinfo small{display:none}}
+.vrgrip{position:absolute;left:0;top:0;width:22px;height:22px;cursor:nwse-resize;z-index:2;touch-action:none;background:linear-gradient(135deg,var(--muted) 0 2px,transparent 2px 5px,var(--muted) 5px 7px,transparent 7px 10px,var(--muted) 10px 12px,transparent 12px);opacity:.55;border-top-left-radius:12px}
+.vrpanel .vrhead{padding-left:24px}
+.vrvid{position:relative}
+.vrvid canvas.vrov{position:absolute;left:0;top:0;pointer-events:none}
+.vrovrow{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;margin-top:8px}
+.vrovrow>span{color:var(--muted);font-size:12px}
+.vrovrow .chk{margin:0}
+.vraim{background:var(--field);border-radius:8px;padding:8px 10px;margin-top:8px}
+.vraim .note{margin:0 0 6px}
+.vrrng{display:grid;grid-template-columns:44px 1fr 52px;align-items:center;gap:8px;margin:2px 0}
+.vrrng span{color:var(--muted);font-size:12px}
+.vrrng input{width:100%;margin:0}
+.vrrng output{font-variant-numeric:tabular-nums;text-align:right}
