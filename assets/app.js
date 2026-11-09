@@ -8,7 +8,7 @@ const CAMERAS = {
   wide: { label: 'Wide 24 mm (1x)', f: 24, px: 8192 },
   tele: { label: 'Medium tele 70 mm (3x)', f: 70, px: 8064 },
 };
-const APP_VERSION = '1.54';
+const APP_VERSION = '1.55';
 const MAX_ALT = 121.92;                          // 400 ft
 const HZ_DEFAULTS = { over: { top: 15.24, buf: 15.24 }, nofly: { top: 0, buf: 10 } };
 const STOP_PENALTY_S = 2.5;                      // time lost decelerating at a stop-and-turn waypoint
@@ -840,6 +840,8 @@ const BASES = {
       L.tileLayer(ESRI + 'Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', { maxNativeZoom: 19, maxZoom: 21 }),
     ]) },
   usgs: { label: 'USGS aerial', max: 16, bytes: 25000, off: ['usgs:USGSImageryOnly'], layer: null },
+  topo: { label: 'USGS topo map', online: true, max: 16, bytes: 18000, off: ['usgs:USGSTopo'],
+    layer: L.tileLayer(USGS + 'USGSTopo/MapServer/tile/{z}/{y}/{x}', { maxNativeZoom: 16, maxZoom: 21, attribution: 'Map: USGS The National Map (public domain)' }) },
   street: { label: 'Street map', online: true, max: 19, bytes: 12000, off: ['World_Street_Map'],
     layer: L.tileLayer(ESRI + 'World_Street_Map/MapServer/tile/{z}/{y}/{x}', { maxNativeZoom: 19, maxZoom: 21, attribution: 'Map © Esri' }) },
 };
@@ -865,12 +867,84 @@ function setUsgsMax(z) {
   toast('USGS imagery now loads down to zoom ' + z + '.');
 }
 let baseLayer = 'sat', layerMenu = false;
+/* ---------- contour lines ----------
+   Drawn on the device from the same USGS elevation data used for terrain following (about 30 ft detail), so they
+   work over any map, including offline where terrain data was downloaded. Every fifth line is heavier and labeled. */
+function ctInterval(z) {   // contour spacing (in the user's units) for a zoom level
+  return imp() ? (z >= 16 ? 10 : z >= 15 ? 20 : z >= 14 ? 40 : 100) : (z >= 16 ? 2 : z >= 15 ? 5 : z >= 14 ? 10 : 25);
+}
+function ctDraw(cv, c) {
+  const g = cv.getContext('2d'), N = 64, step = 256 / N, U = imp() ? FT : 1, iv = ctInterval(c.z);
+  const E = new Float32Array((N + 1) * (N + 1));
+  for (let j = 0; j <= N; j++) for (let i = 0; i <= N; i++) {
+    const ll = map.unproject(L.point(c.x * 256 + i * step, c.y * 256 + j * step), c.z), e = elevAt(ll.lat, ll.lng);
+    E[j * (N + 1) + i] = e == null ? NaN : e * U;
+  }
+  const segs = new Map();   // level -> [x1,y1,x2,y2,...]
+  const add = (lv, a, b) => { (segs.get(lv) || segs.set(lv, []).get(lv)).push(a[0], a[1], b[0], b[1]); };
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+    const tl = E[j * (N + 1) + i], tr = E[j * (N + 1) + i + 1], br = E[(j + 1) * (N + 1) + i + 1], bl = E[(j + 1) * (N + 1) + i];
+    if (!(isFinite(tl) && isFinite(tr) && isFinite(br) && isFinite(bl))) continue;
+    const lo = Math.min(tl, tr, br, bl), hi = Math.max(tl, tr, br, bl);
+    const x = i * step, y = j * step;
+    for (let lv = Math.ceil(lo / iv) * iv; lv <= hi; lv += iv) {
+      if (lv === lo && lv === hi) continue;
+      const pts = [], t = (a, b) => (lv - a) / ((b - a) || 1e-9);
+      if ((tl < lv) !== (tr < lv)) pts.push([x + t(tl, tr) * step, y]);
+      if ((tr < lv) !== (br < lv)) pts.push([x + step, y + t(tr, br) * step]);
+      if ((bl < lv) !== (br < lv)) pts.push([x + t(bl, br) * step, y + step]);
+      if ((tl < lv) !== (bl < lv)) pts.push([x, y + t(tl, bl) * step]);
+      if (pts.length >= 2) add(lv, pts[0], pts[1]);
+      if (pts.length === 4) add(lv, pts[2], pts[3]);
+    }
+  }
+  const sat = baseLayer !== 'topo' && baseLayer !== 'street', idx = iv * 5;
+  segs.forEach((a, lv) => {
+    const major = Math.abs(lv % idx) < 1e-6;
+    g.beginPath(); for (let k = 0; k < a.length; k += 4) { g.moveTo(a[k], a[k + 1]); g.lineTo(a[k + 2], a[k + 3]); }
+    if (sat) { g.strokeStyle = 'rgba(0,0,0,.35)'; g.lineWidth = major ? 3 : 2; g.stroke(); }
+    g.strokeStyle = sat ? (major ? 'rgba(255,214,120,.95)' : 'rgba(255,214,120,.7)') : (major ? 'rgba(140,80,20,.9)' : 'rgba(140,80,20,.55)');
+    g.lineWidth = major ? 1.6 : 0.9; g.stroke();
+    if (major && c.z >= 15 && a.length >= 4) {   // one label per index line in this tile, near its middle
+      const k = Math.floor(a.length / 8) * 4, x = (a[k] + a[k + 2]) / 2, y = (a[k + 1] + a[k + 3]) / 2;
+      if (x > 14 && x < 242 && y > 8 && y < 248) {
+        g.font = '600 10px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.lineWidth = 3;
+        g.strokeStyle = sat ? 'rgba(0,0,0,.75)' : 'rgba(255,255,255,.9)'; g.strokeText(String(Math.round(lv)), x, y);
+        g.fillStyle = sat ? '#ffe7a8' : '#7a3f0c'; g.fillText(String(Math.round(lv)), x, y);
+      }
+    }
+  });
+}
+const ContourLayer = L.GridLayer.extend({
+  createTile(c, done) {
+    const cv = document.createElement('canvas'); cv.width = cv.height = 256;
+    const nw = map.unproject(L.point(c.x * 256, c.y * 256), c.z), se = map.unproject(L.point(c.x * 256 + 256, c.y * 256 + 256), c.z);
+    const go = n => {
+      const st = demEnsure(se.lat, nw.lng, nw.lat, se.lng);
+      if (st === 'ok') { try { ctDraw(cv, c); } catch (e) {} done(null, cv); }
+      else if (st === 'missing' || n > 60) done(null, cv);
+      else setTimeout(() => go(n + 1), 250);
+    };
+    setTimeout(() => go(0), 0);
+    return cv;
+  },
+});
+const contourLayer = new ContourLayer({ minZoom: 13, maxZoom: 22, zIndex: 15, pane: 'overlayPane' });
+let contoursOn = false;
+try { contoursOn = localStorage.getItem('planner.contours') === '1'; } catch (e) {}
+function setContours(on) {
+  contoursOn = on; try { localStorage.setItem('planner.contours', on ? '1' : ''); } catch (e) {}
+  if (on && !map.hasLayer(contourLayer)) contourLayer.addTo(map); else if (!on && map.hasLayer(contourLayer)) map.removeLayer(contourLayer);
+  if (on) { contourLayer.redraw(); if (map.getZoom() < 13) toast('Zoom in to see contour lines'); else toast('Contour lines every ' + ctInterval(map.getZoom()) + ' ' + LEN() + ' (USGS elevation data)'); }
+}
 try { const b = localStorage.getItem('planner.base'); if (BASES[b]) baseLayer = b; } catch (e) {}
 BASES[baseLayer].layer.addTo(map);
+if (contoursOn) contourLayer.addTo(map);
 function setBase(k) {
   if (!BASES[k] || k === baseLayer) return;
   map.removeLayer(BASES[baseLayer].layer); baseLayer = k; BASES[k].layer.addTo(map); BASES[k].layer.bringToBack && BASES[k].layer.bringToBack();
   try { localStorage.setItem('planner.base', k); } catch (e) {}
+  if (contoursOn) contourLayer.redraw();   // line colors depend on the map underneath
 }
 L.control.zoom({ position: 'bottomleft' }).addTo(map);
 const photoCanvas = L.canvas({ padding: 0.2 });
@@ -1078,6 +1152,7 @@ function renderTools() {
   html += '<div class="toolgroup">' + b('missions', 'Missions') + b('markers', 'Features') + b('sync', syLabel()) + b('measure', 'Measure', t === 'measure') + b('print', 'Print') + b('locate', 'My location') + b('layers', BASES[baseLayer].label, layerMenu) + b('offline', 'Offline maps') + b('clear', 'Clear', false, !S.wps.length && !S.shape) + '</div>';
   // The map menu opens beside the toolbar (not below it), so it never runs off the bottom of the screen.
   if (layerMenu) html += '<div class="flyout"><div class="toolgroup menu">' + Object.entries(BASES).map(([k, v]) => b('base:' + k, (k === baseLayer ? '✓ ' : '') + v.label)).join('') + '</div>' +
+    '<div class="toolgroup menu">' + b('contours', (contoursOn ? '✓ ' : '') + 'Contour lines') + '</div>' +
     '<div class="toolgroup menu">' + myMaps.map(m => b('my:' + m.id, (myState(m.id).on ? '✓ ' : '') + esc(mapTitle(m)))).join('') + b('mymaps', 'My maps…') + '</div></div>';
   const tools = document.getElementById('tools');
   tools.innerHTML = html;
@@ -1114,6 +1189,8 @@ document.getElementById('tools').addEventListener('click', e => {
     layerMenu = !layerMenu; renderTools();
   } else if (id.startsWith('my:')) {
     const st = myState(id.slice(3)); st.on = !st.on; saveMyState(); applyMyMaps(); renderTools();
+  } else if (id === 'contours') {
+    setContours(!contoursOn); renderTools();
   } else if (id === 'mymaps') {
     layerMenu = false; renderTools(); openMyMaps();
   } else if (id.startsWith('base:')) {
@@ -1425,7 +1502,7 @@ panel.addEventListener('click', e => {
     return;
   }
   const u = e.target.closest('[data-units]');
-  if (u) { S.units = u.dataset.units; commit(false); return; }
+  if (u) { S.units = u.dataset.units; commit(false); if (contoursOn) contourLayer.redraw(); return; }
   const head = e.target.closest('[data-wp]');
   if (head) { const i = Number(head.dataset.wp); S.sel = S.sel === i ? -1 : i; commit(false); if (S.sel >= 0) { map.panTo([S.wps[i].lat, S.wps[i].lng]); scrollToWp(i); } return; }
   const a = e.target.closest('[data-act]'); if (!a || a.disabled) return;
@@ -2829,6 +2906,7 @@ function renderMarkers() {
   if (!mkVis.all) return;
   markers.forEach(m => {
     if (mkVis.hidden[m.type]) return;
+    if (m.lat == null || m.lng == null || !isFinite(m.lat) || !isFinite(m.lng)) return;   // a damaged record must not stop the rest from drawing
     const t = MK_TYPES[m.type] || MK_TYPES.general;
     const html = `<div class="mk${mkPeek === m.id ? ' peek' : ''}"><i style="background:${t.color}">${mkIcon(m.type, 16)}${m.photos && m.photos.length ? '<em class="mkph"></em>' : ''}</i>${mkVis.labels && m.name ? `<b>${esc(m.name)}</b>` : ''}</div>`;
     const mk = L.marker([m.lat, m.lng], { draggable: !featuresLocked(), interactive: !featuresLocked(), zIndexOffset: 800, icon: L.divIcon({ className: '', html, iconSize: [28, 28], iconAnchor: [14, 14] }) }).addTo(mkLayer);
@@ -2869,8 +2947,8 @@ function markerClick(e) {
   const b = e.target.closest('button[data-k]'); if (!b) return;
   const m = markers.find(x => x.id === mkEdit.id); if (!m) return;
   const k = b.dataset.k;
-  if (k === 'type') { m.type = b.dataset.v; mkLastType = m.type; mkSave(); renderMarkers(); renderMarker(); return; }
-  if (k === 'done') { sheet.hidden = true; return; }
+  if (k === 'type') { m.type = b.dataset.v; mkLastType = m.type; if (mkVis.hidden[m.type] || !mkVis.all) { delete mkVis.hidden[m.type]; mkVis.all = true; mkSaveVis(); toast(MK_TYPES[m.type].label + ' markers were hidden in Features; showing them again'); } mkSave(); renderMarkers(); renderMarker(); return; }
+  if (k === 'done') { sheet.hidden = true; renderMarkers(); return; }
   if (k === 'del') { if (mkArmed) { markers = markers.filter(x => x.id !== m.id); mkSave(); renderMarkers(); sheet.hidden = true; toast('Marker deleted'); } else { mkArmed = true; renderMarker(); } return; }
   if (k === 'copy') { const t = m.lat.toFixed(6) + ', ' + m.lng.toFixed(6); try { navigator.clipboard.writeText(t).then(() => toast('Copied ' + t), () => toast(t)); } catch (err) { toast(t); } return; }
   if (k === 'go') { sheet.hidden = true; map.setView([m.lat, m.lng], Math.max(map.getZoom(), 17)); return; }
