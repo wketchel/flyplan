@@ -79,6 +79,10 @@ public class MainActivity extends Activity {
                 if (fileCb != null) fileCb.onReceiveValue(null);
                 fileCb = cb;
                 fileMulti = p.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE;
+                // Videos and their .SRT files: a plain file picker (no camera, no photo-location prompt).
+                boolean photos = true;
+                for (String t : p.getAcceptTypes()) if (t != null && !t.isEmpty() && !t.startsWith("image/")) photos = false;
+                if (!photos) { openAnyChooser(); return true; }
                 // Photo locations are hidden from apps unless they hold this permission (Android 10+).
                 if (Build.VERSION.SDK_INT >= 29 && checkSelfPermission("android.permission.ACCESS_MEDIA_LOCATION") != PackageManager.PERMISSION_GRANTED
                         && !getSharedPreferences("maps", MODE_PRIVATE).getBoolean("askedMediaLoc", false)) {
@@ -202,6 +206,16 @@ public class MainActivity extends Activity {
     android.webkit.ValueCallback<Uri[]> fileCb;
     boolean fileMulti;
     Uri cameraUri;
+
+    void openAnyChooser() {
+        Intent pick = new Intent(Intent.ACTION_GET_CONTENT);
+        pick.addCategory(Intent.CATEGORY_OPENABLE);
+        pick.setType("*/*");
+        if (fileMulti) pick.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        cameraUri = null;
+        try { startActivityForResult(Intent.createChooser(pick, "Choose files"), REQ_PHOTO); }
+        catch (Exception e) { finishPhotos(null); }
+    }
 
     void openPhotoChooser() {
         Intent pick = new Intent(Intent.ACTION_GET_CONTENT);

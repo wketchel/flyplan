@@ -8,7 +8,7 @@ const CAMERAS = {
   wide: { label: 'Wide 24 mm (1x)', f: 24, px: 8192 },
   tele: { label: 'Medium tele 70 mm (3x)', f: 70, px: 8064 },
 };
-const APP_VERSION = '1.58';
+const APP_VERSION = '1.59';
 const MAX_ALT = 121.92;                          // 400 ft
 const HZ_DEFAULTS = { over: { top: 15.24, buf: 15.24 }, nofly: { top: 0, buf: 10 } };
 const STOP_PENALTY_S = 2.5;                      // time lost decelerating at a stop-and-turn waypoint
@@ -1128,6 +1128,7 @@ function renderMap() {
 /* ---------- toolbar ---------- */
 const LOGO_SVG = '<svg viewBox="0 0 512 512" aria-hidden="true"><defs><linearGradient id="lgbg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1f7a5a"/><stop offset="1" stop-color="#0b3a4a"/></linearGradient></defs><rect width="512" height="512" rx="112" fill="url(#lgbg)"/><path d="M96 420 V236 H156 V420 H216 V236 H276 V420" fill="none" stroke="#fff" stroke-width="30" stroke-linejoin="round" stroke-linecap="round"/><g fill="#ff8a3d" stroke="#fff" stroke-width="8"><circle cx="96" cy="420" r="26"/><circle cx="276" cy="420" r="26"/></g><g transform="translate(366 146) scale(.9)"><path d="M-46 -46 L46 46 M46 -46 L-46 46" stroke="#fff" stroke-width="18" stroke-linecap="round"/><g fill="none" stroke="#ff8a3d" stroke-width="14"><circle cx="-50" cy="-50" r="30"/><circle cx="50" cy="-50" r="30"/><circle cx="-50" cy="50" r="30"/><circle cx="50" cy="50" r="30"/></g><rect x="-24" y="-24" width="48" height="48" rx="12" fill="#fff"/></g></svg>';
 const ICON = {
+  video: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/></svg>',
   weather: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M7 17a4 4 0 0 1-.5-8A5.5 5.5 0 0 1 17 8a3.5 3.5 0 0 1 .5 7H7z"/><path d="M8 20l-1 2M12 20l-1 2M16 20l-1 2"/></svg>',
   print: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 9V3h10v6M7 17H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2"/><rect x="7" y="14" width="10" height="7" rx="1"/></svg>',
   sync: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 18a4.5 4.5 0 0 1-.6-9A6 6 0 0 1 18 9.5a4 4 0 0 1-.5 8.5"/><path d="M9.5 13.5a3 3 0 0 1 5.2-1.2M14.8 11v1.6h-1.6M14.5 15.5a3 3 0 0 1-5.2 1.2M9.2 18v-1.6h1.6"/></svg>',
@@ -1154,7 +1155,7 @@ function renderTools() {
     b('polygon', 'Polygon', t === 'polygon') + b('poi', 'POI orbit', t === 'poi') + '</div>';
   if (t === 'polygon' || t === 'barea' || t === 'bline') html += '<div class="toolgroup">' + b('finish', 'Finish', false, draw.pts.length < (t === 'bline' ? 2 : 3)) + b('undo', 'Undo point', false, !draw.pts.length) + b('cancel', 'Cancel') + '</div>';
   else if (t && t !== 'measure') html += '<div class="toolgroup">' + b('cancel', 'Done') + '</div>';
-  html += '<div class="toolgroup">' + b('missions', 'Missions') + b('markers', 'Features') + b('sync', syLabel()) + b('measure', 'Measure', t === 'measure') + b('weather', 'Weather') + b('print', 'Print') + b('locate', 'My location') + b('layers', BASES[baseLayer].label, layerMenu) + b('offline', 'Offline maps') + b('clear', 'Clear', false, !S.wps.length && !S.shape) + '</div>';
+  html += '<div class="toolgroup">' + b('missions', 'Missions') + b('markers', 'Features') + b('sync', syLabel()) + b('measure', 'Measure', t === 'measure') + b('weather', 'Weather') + b('video', 'Flight video') + b('print', 'Print') + b('locate', 'My location') + b('layers', BASES[baseLayer].label, layerMenu) + b('offline', 'Offline maps') + b('clear', 'Clear', false, !S.wps.length && !S.shape) + '</div>';
   // The map menu opens beside the toolbar (not below it), so it never runs off the bottom of the screen.
   if (layerMenu) html += '<div class="flyout"><div class="toolgroup menu">' + Object.entries(BASES).map(([k, v]) => b('base:' + k, (k === baseLayer ? '✓ ' : '') + v.label)).join('') + '</div>' +
     '<div class="toolgroup menu">' + b('contours', (contoursOn ? '✓ ' : '') + 'Contour lines') + b('radar', (radarOn ? '✓ ' : '') + 'Rain radar') + '</div>' +
@@ -1180,6 +1181,7 @@ document.getElementById('tools').addEventListener('click', e => {
   if (btn.dataset.tool === 'about') { openAbout(); return; }
   if (btn.dataset.tool === 'print') { openPrint(); return; }
   if (btn.dataset.tool === 'weather') { openWeather(); return; }
+  if (btn.dataset.tool === 'video') { vrOpen(); return; }
   const id = btn.dataset.tool;
   if (['waypoint', 'rect', 'polygon', 'poi'].includes(id)) setTool(draw && draw.tool === id ? null : id);
   else if (id === 'finish') finishPolygon();
@@ -1746,6 +1748,221 @@ function wxClick(e) {
   else if (k === 'radar') { setRadar(!radarOn); renderTools(); if (radarOn) sheet.hidden = true; else renderWx(); }
 }
 try { const st = JSON.parse(localStorage.getItem('planner.wx')); if (st && st.data) Object.assign(wx, { key: st.key, at: st.at, data: st.data, kp: st.kp, what: st.what }); } catch (e) {}
+/* ----- flight video replay -----
+   DJI drones can save a subtitle file (.SRT) beside each video with the drone's position for every frame.
+   FlyPlan plays the video next to the map, moves a drone icon along the flight, and tapping the track jumps the video
+   to that spot. "Mark this moment" saves a marker with a still from the video and a link back to that second.
+   Videos are never copied into the app: they play straight from the file you choose. */
+const vrLayer = L.layerGroup().addTo(map);
+const vrFiles = new Map();   // file name → File, for this session (so video markers can reopen a clip)
+let vr = null;               // { name, video: File|null, url, pts: [{t,lat,lng,alt,...}], t, follow, min }
+function vrNum(b, re) { const x = re.exec(b); return x ? parseFloat(x[1]) : null; }
+function vrParseSrt(text) {
+  const out = [];
+  String(text).replace(/\r/g, '').split(/\n[ \t]*\n/).forEach(b => {
+    const m = /(\d+):(\d+):(\d+)[,.](\d+)\s*-->/.exec(b); if (!m) return;
+    const t = +m[1] * 3600 + +m[2] * 60 + +m[3] + +m[4] / 1000;
+    let lat = vrNum(b, /\[lat[a-z]*\s*:\s*([-\d.]+)/i), lng = vrNum(b, /\[lon[a-z]*\s*:\s*([-\d.]+)/i);
+    if (lat == null || lng == null) { const g = /GPS\s*\(\s*([-\d.]+)\s*,\s*([-\d.]+)/i.exec(b); if (g) { lng = +g[1]; lat = +g[2]; } }
+    if (lat == null || lng == null || !isFinite(lat) || !isFinite(lng) || (!lat && !lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return;
+    let alt = vrNum(b, /rel_alt\s*:\s*([-\d.]+)/i); if (alt == null) alt = vrNum(b, /\bH\s*:?\s*([-\d.]+)\s*m/);
+    const sh = /shutter\s*:\s*([\d/.]+)/i.exec(b), dt = /(\d{4}-\d\d-\d\d[ T]\d\d:\d\d:\d\d)/.exec(b);
+    out.push({ t, lat, lng, alt, abs: vrNum(b, /abs_alt\s*:\s*([-\d.]+)/i), iso: vrNum(b, /\biso\s*:\s*([\d.]+)/i), shutter: sh ? sh[1] : null,
+      fnum: vrNum(b, /fnum\s*:\s*([\d.]+)/i), focal: vrNum(b, /focal_len\s*:\s*([\d.]+)/i), date: dt ? dt[1].replace('T', ' ') : null });
+  });
+  out.sort((a, b) => a.t - b.t);
+  // DJI writes one entry per frame (30–60 a second); 5 a second is plenty for the map.
+  const pts = []; out.forEach(p => { if (!pts.length || p.t - pts[pts.length - 1].t >= 0.2) pts.push(p); });
+  if (out.length && pts[pts.length - 1] !== out[out.length - 1]) pts.push(out[out.length - 1]);
+  // Speed and heading from about a second either side.
+  pts.forEach((p, i) => {
+    let a = i, b = i; while (a > 0 && p.t - pts[a - 1].t <= 1) a--; while (b < pts.length - 1 && pts[b + 1].t - p.t <= 1) b++;
+    const A = pts[a], B = pts[b], d = hav([A.lat, A.lng], [B.lat, B.lng]);
+    p.spd = B.t > A.t ? d / (B.t - A.t) : 0;
+    p.hdg = d > 1.5 ? bearing(A, B) : (i ? pts[i - 1].hdg : 0);
+  });
+  return pts;
+}
+function vrStem(n) { return String(n || '').replace(/\.[^.]+$/, '').toLowerCase(); }
+function vrIsVideo(f) { return /^video\//.test(f.type || '') || /\.(mp4|mov|m4v|lrf)$/i.test(f.name || ''); }
+function vrPick() {
+  return new Promise(res => {
+    const i = document.createElement('input');
+    i.type = 'file'; i.accept = 'video/*,.mp4,.MP4,.mov,.MOV,.srt,.SRT'; i.multiple = true; i.style.display = 'none';
+    i.onchange = () => { res(Array.from(i.files || [])); i.remove(); };
+    document.body.appendChild(i); i.click();
+  });
+}
+/* Pair the chosen videos with their .SRT files (same name) and start the first clip. want = { name, t } to reopen a video marker. */
+async function vrOpen(given, want) {
+  const files = given || await vrPick(); if (!files.length) return;
+  const srts = files.filter(f => /\.srt$/i.test(f.name)), vids = files.filter(vrIsVideo);
+  if (!srts.length && !vids.length) { toast('Choose a drone video and its .SRT file (they have the same name).'); return; }
+  vids.forEach(f => vrFiles.set(f.name, f)); srts.forEach(f => vrFiles.set(f.name, f));
+  // Every clip chosen this session stays in the list, so you can hop between flights.
+  const clips = [];
+  for (const [n, f] of vrFiles) if (vrIsVideo(f)) clips.push({ name: n, video: f, srt: vrFind(n, 'srt') });
+  for (const [n, f] of vrFiles) if (/\.srt$/i.test(n) && !clips.some(c => c.srt === f)) clips.push({ name: n, video: null, srt: f });
+  const first = vids[0] || srts[0];
+  let c = (want && clips.find(x => x.name === want.name)) || clips.find(x => x.video === first || x.srt === first) || clips[0];
+  if (want && c.name !== want.name && c.video) toast('That isn’t ' + want.name + '; playing ' + c.name + ' instead.');
+  if (!c.srt) { toast('No .SRT file came with ' + c.name + '. Choose the video and the .SRT with the same name together.'); return; }
+  let pts;
+  try { pts = vrParseSrt(await c.srt.text()); } catch (e) { pts = []; }
+  if (pts.length < 2) { toast(c.srt.name + ' has no drone positions in it. Turn on Video Caption in the DJI Fly camera settings.'); return; }
+  vrStart(c, pts, clips, want && c.name === want.name ? want.t : 0);
+}
+function vrFind(name, kind) {
+  for (const [n, f] of vrFiles) if (vrStem(n) === vrStem(name) && (kind === 'srt' ? /\.srt$/i.test(n) : vrIsVideo(f))) return f;
+  return null;
+}
+function vrStart(c, pts, clips, t0) {
+  vrStop(true);
+  vr = { name: c.video ? c.video.name : c.name, srtName: c.srt.name, video: c.video, url: c.video ? URL.createObjectURL(c.video) : null, pts, clips: clips || [], t: t0 || 0,
+    follow: true, min: false, err: null, dur: pts[pts.length - 1].t };
+  const ll = pts.map(p => [p.lat, p.lng]);
+  vr.line = L.polyline(ll, { color: '#ffffff', weight: 6, opacity: 0.55, interactive: false }).addTo(vrLayer);
+  vr.track = L.polyline(ll, { color: '#4dabf7', weight: 3, opacity: 0.95, interactive: false }).addTo(vrLayer);
+  vr.done = L.polyline([], { color: '#ff922b', weight: 4, opacity: 0.95, interactive: false }).addTo(vrLayer);
+  vr.hit = L.polyline(ll, { color: '#000', weight: 26, opacity: 0, interactive: true }).addTo(vrLayer);
+  vr.hit.on('click', e => { L.DomEvent.stop(e); vrSeek(vrNearest(e.latlng)); });
+  L.marker(ll[0], { interactive: false, icon: L.divIcon({ className: '', html: '<div class="vrstart">▶</div>', iconSize: [20, 20], iconAnchor: [10, 10] }) }).addTo(vrLayer);
+  vr.drone = L.marker(ll[0], { interactive: false, zIndexOffset: 2000, icon: L.divIcon({ className: '', html: '<div class="vrdrone"><i>➤</i></div>', iconSize: [30, 30], iconAnchor: [15, 15] }) }).addTo(vrLayer);
+  vrRender();
+  const fr = vrFree();
+  map.fitBounds(vr.track.getBounds(), { paddingTopLeft: [fr.x0 + 40, fr.y0 + 40], paddingBottomRight: [map.getSize().x - fr.x1 + 40, map.getSize().y - fr.y1 + 40], maxZoom: 18 });
+  vrSeek(vr.t);
+}
+function vrStop(quiet) {
+  if (!vr) return;
+  cancelAnimationFrame(vr.raf);
+  if (vr.url) URL.revokeObjectURL(vr.url);
+  vrLayer.clearLayers(); vr = null;
+  const p = document.getElementById('vrpanel'); if (p) p.remove();
+  if (!quiet) toast('Flight replay closed');
+}
+function vrFree() {   // the part of the map not covered by the replay panel or the toolbar
+  const sz = map.getSize(), r = map.getContainer().getBoundingClientRect(), p = document.getElementById('vrpanel'), tb = document.getElementById('tools');
+  const f = { x0: 0, y0: 0, x1: sz.x, y1: sz.y };
+  if (tb && !appEl.classList.contains('tools-hidden')) { const q = tb.getBoundingClientRect(); if (q.width && q.right - r.left < sz.x / 2) f.x0 = q.right - r.left; }
+  if (p) { const q = p.getBoundingClientRect(); if (q.width > sz.x * 0.7) f.y1 = Math.min(f.y1, q.top - r.top); else f.x1 = Math.min(f.x1, q.left - r.left); }
+  return f;
+}
+function vrIdx(t) {   // last sample at or before t
+  const P = vr.pts; let lo = 0, hi = P.length - 1;
+  if (t <= P[0].t) return 0; if (t >= P[hi].t) return hi;
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (P[m].t <= t) lo = m; else hi = m; }
+  return lo;
+}
+function vrAt(t) {    // position at time t, between samples
+  const P = vr.pts, i = vrIdx(t), a = P[i], b = P[Math.min(i + 1, P.length - 1)], f = b.t > a.t ? Math.max(0, Math.min(1, (t - a.t) / (b.t - a.t))) : 0;
+  return { i, lat: a.lat + (b.lat - a.lat) * f, lng: a.lng + (b.lng - a.lng) * f, alt: a.alt == null ? null : a.alt + ((b.alt == null ? a.alt : b.alt) - a.alt) * f, p: a };
+}
+function vrNearest(ll) {
+  let best = 0, bd = Infinity;
+  vr.pts.forEach(p => { const d = (p.lat - ll.lat) ** 2 + ((p.lng - ll.lng) * Math.cos(ll.lat * Math.PI / 180)) ** 2; if (d < bd) { bd = d; best = p.t; } });
+  return best;
+}
+function vrVideo() { return document.querySelector('#vrpanel video'); }
+function vrSeek(t) {
+  if (!vr) return;
+  vr.t = Math.max(0, Math.min(vr.dur, t));
+  const v = vrVideo();
+  if (v && !vr.err && v.readyState >= 1) v.currentTime = vr.t; else if (v && !vr.err) vr.pend = vr.t;
+  vrUpdate(true);
+}
+function vrUpdate(seeked) {
+  if (!vr) return;
+  const v = vrVideo(); if (v && !vr.err && !seeked) vr.t = v.currentTime;
+  const at = vrAt(vr.t), P = vr.pts;
+  vr.drone.setLatLng([at.lat, at.lng]);
+  const ic = vr.drone.getElement(); if (ic) { const i = ic.querySelector('i'); if (i) i.style.transform = 'rotate(' + ((at.p.hdg || 0) - 90) + 'deg)'; }
+  vr.done.setLatLngs(P.slice(0, at.i + 1).map(p => [p.lat, p.lng]).concat([[at.lat, at.lng]]));
+  if (vr.follow) {
+    const px = map.latLngToContainerPoint([at.lat, at.lng]), f = vrFree(), m = 50;
+    if (px.x < f.x0 + m || px.y < f.y0 + m || px.x > f.x1 - m || px.y > f.y1 - m) map.panBy([px.x - (f.x0 + f.x1) / 2, px.y - (f.y0 + f.y1) / 2], { animate: true, duration: 0.4 });
+  }
+  const info = document.getElementById('vrinfo');
+  if (info) {
+    const p = at.p, from = hav([P[0].lat, P[0].lng], [at.lat, at.lng]);
+    info.innerHTML = `<b>${fmtTime(vr.t)}</b> / ${fmtTime(vr.dur)}<span>${at.alt != null ? fmtLen(at.alt) + ' up' : ''}</span><span>${r0(toSpd(p.spd || 0))} ${SPD()}</span><span>${fmtDist(from)} from start</span>` +
+      (p.iso || p.shutter ? `<small>${[p.iso ? 'ISO ' + p.iso : '', p.shutter ? p.shutter + ' s' : '', p.fnum ? 'f/' + p.fnum : '', p.date || ''].filter(Boolean).join(' · ')}</small>` : '');
+  }
+  const sl = document.getElementById('vrslide'); if (sl && document.activeElement !== sl) sl.value = vr.t;
+}
+function vrLoop() { if (!vr) return; vrUpdate(); const v = vrVideo(); if (v && !v.paused && !v.ended) vr.raf = requestAnimationFrame(vrLoop); }
+function vrRender() {
+  let p = document.getElementById('vrpanel');
+  if (!p) { p = document.createElement('div'); p.id = 'vrpanel'; p.className = 'vrpanel'; document.getElementById('mapwrap').appendChild(p); p.addEventListener('click', vrClick); p.addEventListener('input', vrInput); p.addEventListener('change', vrInput); }
+  p.classList.toggle('min', vr.min);
+  const others = vr.clips.filter(c => c.name !== vr.name && c.srt);
+  p.innerHTML = `<div class="vrhead"><b title="${esc(vr.name)}">${esc(vr.name)}</b><button data-vr="min" aria-label="${vr.min ? 'Expand' : 'Minimize'}">${vr.min ? '▴' : '▾'}</button><button data-vr="close" aria-label="Close">✕</button></div>
+    <div class="vrbody">
+    ${vr.url && !vr.err ? `<video src="${vr.url}" controls playsinline preload="metadata"></video>` :
+      `<div class="vrnovid">${vr.err ? esc(vr.err) : 'No video loaded, just the flight track.'} <button class="btn small" data-vr="addvid">Choose the video…</button></div>`}
+    <input type="range" id="vrslide" min="0" max="${vr.dur}" step="0.1" value="${vr.t}" aria-label="Flight time">
+    <div id="vrinfo" class="vrinfo"></div>
+    <div class="btns"><button class="btn small primary" data-vr="mark">Mark this moment</button><label class="chk" style="margin:0"><input type="checkbox" id="vrfollow"${vr.follow ? ' checked' : ''}>Follow drone</label><button class="btn small" data-vr="open">Other video…</button></div>
+    ${others.length ? `<div class="vrclips"><span>Other clips:</span>${others.map(c => `<button class="btn small" data-vr="clip" data-n="${esc(c.name)}">${esc(c.name)}</button>`).join('')}</div>` : ''}
+    <p class="note">Tap the blue track to jump the video there.</p></div>`;
+  const v = p.querySelector('video');
+  if (v) {
+    v.addEventListener('loadedmetadata', () => { if (vr.pend != null) { v.currentTime = vr.pend; vr.pend = null; } else if (vr.t) v.currentTime = vr.t; });
+    v.addEventListener('play', () => { cancelAnimationFrame(vr.raf); vr.raf = requestAnimationFrame(vrLoop); });
+    v.addEventListener('seeked', () => vrUpdate());
+    v.addEventListener('timeupdate', () => { if (v.paused) vrUpdate(); });
+    v.addEventListener('error', () => {
+      if (!vr) return;
+      vr.err = 'This video can’t play here' + (/(hevc|h\.?265)/i.test(vr.name) ? '' : ' (most likely it was recorded in H.265/HEVC)') + '. The track still works. To play it, record in H.264, or on Windows install HEVC Video Extensions from the Microsoft Store.';
+      vrRender(); vrUpdate(true);
+    });
+  }
+  vrUpdate(true);
+}
+function vrInput(e) {
+  if (e.target.id === 'vrslide') { const t = +e.target.value, v = vrVideo(); if (v && !v.paused) v.pause(); vrSeek(t); }
+  else if (e.target.id === 'vrfollow') vr.follow = e.target.checked;
+}
+async function vrClick(e) {
+  const b = e.target.closest('[data-vr]'); if (!b || !vr) return;
+  const k = b.dataset.vr;
+  if (k === 'close') { vrStop(); return; }
+  if (k === 'min') { vr.min = !vr.min; const v = vrVideo(); if (vr.min && v) v.pause(); vrRender(); return; }
+  if (k === 'open') { vrOpen(); return; }
+  if (k === 'addvid') { const f = await vrPick(); const v = f.find(vrIsVideo); if (!v) return; f.forEach(x => vrFiles.set(x.name, x)); if (vr.url) URL.revokeObjectURL(vr.url); vr.video = v; vr.name = v.name; vr.url = URL.createObjectURL(v); vr.err = null; vrRender(); return; }
+  if (k === 'clip') { const c = vr.clips.find(x => x.name === b.dataset.n); if (c) vrOpen([c.video, c.srt].filter(Boolean)); return; }
+  if (k === 'mark') { vrMark(); return; }
+}
+map.on('dragstart', () => { if (vr && vr.follow) { vr.follow = false; const c = document.getElementById('vrfollow'); if (c) c.checked = false; } });
+/* Save a marker where the drone is, with a still from the video and a link back to this second. */
+async function vrMark() {
+  const v = vrVideo(); if (v && !v.paused) v.pause();
+  if (v && !vr.err) vr.t = v.currentTime;
+  const at = vrAt(vr.t), t = Math.round(vr.t * 10) / 10;
+  const m = addMarker([+at.lat.toFixed(7), +at.lng.toFixed(7)], { type: 'landmark', name: 'Video ' + fmtTime(t), notes: at.alt != null ? 'Seen from ' + fmtLen(at.alt) + ' up' + (at.p.date ? ', ' + at.p.date : '') + '.' : '', video: { file: vr.name, t } });
+  if (v && !vr.err && v.videoWidth) {
+    try {
+      const sc = Math.min(1, 1600 / v.videoWidth), cv = document.createElement('canvas');
+      cv.width = Math.round(v.videoWidth * sc); cv.height = Math.round(v.videoHeight * sc);
+      cv.getContext('2d').drawImage(v, 0, 0, cv.width, cv.height);
+      const blob = await new Promise(r => cv.toBlob(r, 'image/jpeg', 0.85));
+      const r = await phProcess(new File([blob], vrStem(vr.name) + '-' + fmtTime(t).replace(':', 'm') + 's.jpg', { type: 'image/jpeg' }));
+      r.lat = m.lat; r.lng = m.lng; await phPut(r);
+      m.photos = (m.photos || []).concat([r.id]); mkSave(); renderMarkers();
+    } catch (err) { /* the marker is still useful without the still */ }
+  }
+  openMarker(m.id, true);
+  toast('Marked ' + fmtTime(t) + '. Pick a type and name; the marker links back to this moment in the video.');
+}
+/* From a marker: reopen the clip at the marked second. */
+function vrPlayMarker(m) {
+  const w = m.video; if (!w) return;
+  sheet.hidden = true;
+  const vid = vrFiles.get(w.file), srt = vrFind(w.file, 'srt');
+  if (vid && srt) { vrOpen([vid, srt], { name: w.file, t: w.t }); return; }
+  toast('Choose ' + w.file + ' and its .SRT file');
+  vrPick().then(f => { if (f.length) vrOpen(f, { name: w.file, t: w.t }); });
+}
 /* ----- rain radar: NOAA NEXRAD composite (US), refreshed every 5 minutes ----- */
 let radarOn = false, radarTimer = null;
 const radarLayer = L.tileLayer('https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png?t={t}', { t: () => Math.floor(Date.now() / 300000), maxNativeZoom: 10, maxZoom: 22, opacity: 0.6, zIndex: 18, attribution: 'Radar: NOAA NEXRAD via Iowa Environmental Mesonet' });
@@ -3154,6 +3371,7 @@ function renderMarker() {
     <label class="f"><span>Name</span><div class="in"><input type="text" id="mkname" value="${esc(m.name)}" placeholder="${esc(MK_TYPES[m.type].label)}"></div></label>
     <label class="f"><span>Notes</span><div class="in"><textarea id="mknotes" rows="3" placeholder="${esc((MK_TYPES[m.type] || {}).ph || 'Height, direction, last checked…')}">${esc(m.notes)}</textarea></div></label>
     ${phStrip(m, 'm')}
+    ${m.video ? `<div class="btns" style="margin:8px 0"><button class="btn small primary" data-k="video">▶ Play video at ${fmtTime(m.video.t)}</button><span class="note" style="margin:0;align-self:center">${esc(m.video.file)}</span></div>` : ''}
     <p class="note">Location: <b>${coords}</b> <button class="btn small" data-k="copy">Copy</button> · ${DRAG} the marker on the map to move it.</p>
     <div class="btns" style="margin-bottom:8px"><button class="btn small" data-k="orbit">Orbit this (POI)</button><button class="btn small" data-k="wp">Add as waypoint</button><button class="btn small" data-k="go">Center map</button></div>
     <div class="btns"><button class="btn danger" data-k="del">${mkArmed ? 'Tap again to delete' : 'Delete'}</button><button class="btn primary" data-k="done">Done</button></div></div>`;
@@ -3169,6 +3387,7 @@ function markerClick(e) {
   if (k === 'del') { if (mkArmed) { markers = markers.filter(x => x.id !== m.id); mkSave(); renderMarkers(); sheet.hidden = true; toast('Marker deleted'); } else { mkArmed = true; renderMarker(); } return; }
   if (k === 'copy') { const t = m.lat.toFixed(6) + ', ' + m.lng.toFixed(6); try { navigator.clipboard.writeText(t).then(() => toast('Copied ' + t), () => toast(t)); } catch (err) { toast(t); } return; }
   if (k === 'go') { sheet.hidden = true; map.setView([m.lat, m.lng], Math.max(map.getZoom(), 17)); return; }
+  if (k === 'video') { vrPlayMarker(m); return; }
   if (k === 'orbit') { sheet.hidden = true; setShape({ type: 'poi', center: [m.lat, m.lng] }); toast('Orbit set around ' + (m.name || MK_TYPES[m.type].label)); return; }
   if (k === 'wp') { sheet.hidden = true; ensureManual(); S.wps.push(newWp([m.lat, m.lng])); S.sel = S.wps.length - 1; commit(false); toast('Added waypoint ' + S.wps.length); return; }
 }
@@ -3186,7 +3405,7 @@ function renderMarkerList() {
   const list = markers.slice().sort((a, b) => hav(here, [a.lat, a.lng]) - hav(here, [b.lat, b.lng]));
   let h = `<div class="card"><h2>Features</h2>
     <p class="note">Tap <b>Add on map</b> then tap a spot, or press and hold anywhere on the map. Markers stay on the map for every mission and work offline.</p>
-    <div class="btns" style="margin-bottom:8px"><button class="btn primary" data-l2="add">Add on map</button>${S.home ? '<button class="btn" data-l2="here">Add at my location</button>' : ''}<button class="btn" data-l2="photos">Photos → markers…</button></div>
+    <div class="btns" style="margin-bottom:8px"><button class="btn primary" data-l2="add">Add on map</button>${S.home ? '<button class="btn" data-l2="here">Add at my location</button>' : ''}<button class="btn" data-l2="photos">Photos → markers…</button><button class="btn" data-l2="video">Flight video…</button></div>
     <label class="chk"><input type="checkbox" id="mkall"${mkVis.all ? ' checked' : ''}>Show markers on the map</label>
     <label class="chk"><input type="checkbox" id="mklabels"${mkVis.labels ? ' checked' : ''}>Show names</label>
     <div class="mktypes">${Object.entries(MK_TYPES).map(([k, t]) => `<button class="mkt${mkVis.hidden[k] ? '' : ' on'}" data-l2="vis" data-v="${k}"><i style="background:${t.color}">${mkIcon(k, 16)}</i><span>${t.label}${counts[k] ? ' · ' + counts[k] : ''}</span></button>`).join('')}</div>
@@ -3241,6 +3460,7 @@ function markerListClick(e) {
     return;
   }
   if (k === 'photos') { phToMarkers(); return; }
+  if (k === 'video') { sheet.hidden = true; vrOpen(); return; }
   if (k === 'add') { sheet.hidden = true; setTool('marker'); return; }
   if (k === 'barea' || k === 'bline') { sheet.hidden = true; setTool(k); return; }
   if (k === 'hfind') { openFindHazards(); return; }

@@ -335,3 +335,25 @@ select option:disabled { color: var(--muted); }
 .wxrow.yel .wxdot { background: #f08c00; } .wxrow.red .wxdot { background: #e03131; } .wxrow.dark .wxdot { background: #868e96; } .wxrow.dark { color: var(--muted); }
 .wxarr { display: inline-block; font-style: normal; font-weight: 800; margin-right: 4px; color: var(--accent); }
 @media (max-height: 860px) and (orientation: landscape) { .tool { min-height: 40px; padding-top: 7px; padding-bottom: 7px; } }
+/* flight video replay */
+.vrpanel{position:absolute;right:10px;bottom:26px;z-index:580;width:min(440px,calc(100% - 90px));background:var(--panel);color:var(--ink);border-radius:12px;box-shadow:var(--shadow);border:1px solid var(--line);overflow:hidden;font-size:13px}
+.vrhead{display:flex;align-items:center;gap:6px;padding:6px 8px 6px 12px;border-bottom:1px solid var(--line)}
+.vrhead b{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vrhead button{border:0;background:var(--chip);color:var(--ink);width:30px;height:30px;border-radius:8px;font-size:14px;cursor:pointer}
+.vrpanel.min .vrbody{display:none}
+.vrbody{padding:8px 10px 6px}
+.vrbody video{display:block;width:100%;max-height:min(42vh,300px);background:#000;border-radius:8px}
+.vrbody input[type=range]{width:100%;margin:8px 0 4px}
+.vrnovid{background:var(--field);border-radius:8px;padding:10px;color:var(--muted)}
+.vrnovid .btn{margin-top:6px}
+.vrinfo{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline;margin-bottom:8px}
+.vrinfo span{color:var(--muted)}
+.vrinfo small{flex-basis:100%;color:var(--muted);font-size:11.5px}
+.vrbody .btns{align-items:center}
+.vrclips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;align-items:center}
+.vrclips span{color:var(--muted);font-size:12px}
+.vrbody .note{margin:6px 0 0;font-size:11.5px}
+.vrdrone{width:30px;height:30px;border-radius:50%;background:#ff922b;border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center}
+.vrdrone i{font-style:normal;color:#fff;font-size:15px;line-height:1;display:block}
+.vrstart{width:20px;height:20px;border-radius:50%;background:#4dabf7;color:#fff;border:2px solid #fff;font-size:9px;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 4px rgba(0,0,0,.4)}
+@media (orientation: portrait){.vrpanel{left:56px;right:10px;width:auto;bottom:10px}.vrbody{padding:6px 8px 4px}.vrbody video{max-height:150px;width:auto;max-width:100%;margin:0 auto}.vrbody .note{display:none}.vrinfo small{display:none}}
