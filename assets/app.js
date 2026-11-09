@@ -8,7 +8,7 @@ const CAMERAS = {
   wide: { label: 'Wide 24 mm (1x)', f: 24, px: 8192 },
   tele: { label: 'Medium tele 70 mm (3x)', f: 70, px: 8064 },
 };
-const APP_VERSION = '1.60';
+const APP_VERSION = '1.61';
 const MAX_ALT = 121.92;                          // 400 ft
 const HZ_DEFAULTS = { over: { top: 15.24, buf: 15.24 }, nofly: { top: 0, buf: 10 } };
 const STOP_PENALTY_S = 2.5;                      // time lost decelerating at a stop-and-turn waypoint
@@ -1768,7 +1768,6 @@ function vrParseSrt(text) {
     let alt = vrNum(b, /rel_alt\s*:\s*([-\d.]+)/i); if (alt == null) alt = vrNum(b, /\bH\s*:?\s*([-\d.]+)\s*m/);
     const sh = /shutter\s*:\s*([\d/.]+)/i.exec(b), dt = /(\d{4}-\d\d-\d\d[ T]\d\d:\d\d:\d\d)/.exec(b);
     out.push({ t, lat, lng, alt, abs: vrNum(b, /abs_alt\s*:\s*([-\d.]+)/i), iso: vrNum(b, /\biso\s*:\s*([\d.]+)/i), shutter: sh ? sh[1] : null,
-      gyaw: vrNum(b, /gb_yaw\s*:?\s*([-\d.]+)/i), gpitch: vrNum(b, /gb_pitch\s*:?\s*([-\d.]+)/i),
       fnum: vrNum(b, /fnum\s*:\s*([\d.]+)/i), focal: vrNum(b, /focal_len\s*:\s*([\d.]+)/i), date: dt ? dt[1].replace('T', ' ') : null });
   });
   out.sort((a, b) => a.t - b.t);
@@ -1820,9 +1819,7 @@ function vrFind(name, kind) {
 function vrStart(c, pts, clips, t0) {
   vrStop(true);
   vr = { name: c.video ? c.video.name : c.name, srtName: c.srt.name, video: c.video, url: c.video ? URL.createObjectURL(c.video) : null, pts, clips: clips || [], t: t0 || 0,
-    follow: true, min: false, err: null, dur: pts[pts.length - 1].t, aimOpen: false };
-  vr.aim = vrAimGet(); vr.mp = vrMissionPts();
-  { const la = pts.map(p => p.lat), ln = pts.map(p => p.lng); demEnsure(Math.min(...la) - 0.02, Math.min(...ln) - 0.02, Math.max(...la) + 0.02, Math.max(...ln) + 0.02); }
+    follow: true, min: false, err: null, dur: pts[pts.length - 1].t };
   const ll = pts.map(p => [p.lat, p.lng]);
   vr.line = L.polyline(ll, { color: '#ffffff', weight: 6, opacity: 0.55, interactive: false }).addTo(vrLayer);
   vr.track = L.polyline(ll, { color: '#4dabf7', weight: 3, opacity: 0.95, interactive: false }).addTo(vrLayer);
@@ -1892,8 +1889,6 @@ function vrUpdate(seeked) {
       (p.iso || p.shutter ? `<small>${[p.iso ? 'ISO ' + p.iso : '', p.shutter ? p.shutter + ' s' : '', p.fnum ? 'f/' + p.fnum : '', p.date || ''].filter(Boolean).join(' · ')}</small>` : '');
   }
   const sl = document.getElementById('vrslide'); if (sl && document.activeElement !== sl) sl.value = vr.t;
-  vrDraw(at);
-  const ai = document.getElementById('vraimsrc'); if (ai) { const c = vrCam(at); ai.textContent = c.src === 'srt' ? 'Camera angles come from the .SRT.' : c.src === 'mission' ? 'Tilt comes from the mission (' + r0(c.tilt) + '°); heading follows the direction of travel.' : 'This .SRT doesn’t record where the camera points, so heading follows the direction of travel and tilt is ' + r0(c.tilt) + '°.'; }
 }
 function vrLoop() { if (!vr) return; vrUpdate(); const v = vrVideo(); if (v && !v.paused && !v.ended) vr.raf = requestAnimationFrame(vrLoop); }
 function vrRender() {
@@ -1901,18 +1896,13 @@ function vrRender() {
   if (!p) { p = document.createElement('div'); p.id = 'vrpanel'; p.className = 'vrpanel'; document.getElementById('mapwrap').appendChild(p); p.addEventListener('click', vrClick); p.addEventListener('input', vrInput); p.addEventListener('change', vrInput); }
   p.classList.toggle('min', vr.min);
   const others = vr.clips.filter(c => c.name !== vr.name && c.srt);
-  const pref = vrOvPrefs(), a = vr.aim || {}, rng = (id, l, min, max, st, val, unit) => `<label class="vrrng"><span>${l}</span><input type="range" id="${id}" min="${min}" max="${max}" step="${st}" value="${val}"><output>${val}${unit}</output></label>`;
   p.innerHTML = `<div class="vrgrip" title="Drag to resize"></div><div class="vrhead"><b title="${esc(vr.name)}">${esc(vr.name)}</b><button data-vr="min" aria-label="${vr.min ? 'Expand' : 'Minimize'}">${vr.min ? '▴' : '▾'}</button><button data-vr="close" aria-label="Close">✕</button></div>
     <div class="vrbody">
-    ${vr.url && !vr.err ? `<div class="vrvid"><video src="${vr.url}" controls playsinline preload="metadata"></video><canvas class="vrov"></canvas></div>` :
+    ${vr.url && !vr.err ? `<video src="${vr.url}" controls playsinline preload="metadata"></video>` :
       `<div class="vrnovid">${vr.err ? esc(vr.err) : 'No video loaded, just the flight track.'} <button class="btn small" data-vr="addvid">Choose the video…</button></div>`}
     <input type="range" id="vrslide" min="0" max="${vr.dur}" step="0.1" value="${vr.t}" aria-label="Flight time">
     <div id="vrinfo" class="vrinfo"></div>
     <div class="btns"><button class="btn small primary" data-vr="mark">Mark this moment</button><label class="chk" style="margin:0"><input type="checkbox" id="vrfollow"${vr.follow ? ' checked' : ''}>Follow drone</label><button class="btn small" data-vr="open">Other video…</button></div>
-    ${vr.url && !vr.err ? `<div class="vrovrow"><span>On the video:</span><label class="chk"><input type="checkbox" id="vrovm"${pref.mission ? ' checked' : ''}>Mission${vr.mp.length ? '' : ' (none open)'}</label><label class="chk"><input type="checkbox" id="vrovk"${pref.markers ? ' checked' : ''}>Markers</label><button class="btn small" data-vr="aim">${vr.aimOpen ? 'Done lining up' : 'Line up…'}</button></div>` : ''}
-    ${vr.aimOpen && vr.url && !vr.err ? `<div class="vraim"><p class="note" id="vraimsrc"></p>
-      ${rng('vrtilt', 'Tilt', -90, 0, 1, a.tilt != null ? a.tilt : '', '°')}${rng('vrturn', 'Turn', -45, 45, 1, a.turn || 0, '°')}${rng('vrzoom', 'Zoom', 0.7, 1.5, 0.01, a.zoom || 1, '×')}
-      <p class="note">Pause on a frame where a waypoint or marker is easy to see, then slide until the drawing sits on it. Saved for this video.</p><button class="btn small" data-vr="aimreset">Reset</button></div>` : ''}
     ${others.length ? `<div class="vrclips"><span>Other clips:</span>${others.map(c => `<button class="btn small" data-vr="clip" data-n="${esc(c.name)}">${esc(c.name)}</button>`).join('')}</div>` : ''}
     <p class="note">Tap the blue track to jump the video there.</p></div>`;
   p.querySelector('.vrgrip').addEventListener('pointerdown', vrGrip);
@@ -1936,12 +1926,6 @@ function vrRender() {
 function vrInput(e) {
   if (e.target.id === 'vrslide') { const t = +e.target.value, v = vrVideo(); if (v && !v.paused) v.pause(); vrSeek(t); }
   else if (e.target.id === 'vrfollow') vr.follow = e.target.checked;
-  else if (e.target.id === 'vrovm' || e.target.id === 'vrovk') { const o = vrOvPrefs(); o[e.target.id === 'vrovm' ? 'mission' : 'markers'] = e.target.checked; try { localStorage.setItem('planner.vrov', JSON.stringify(o)); } catch (er) {} vrUpdate(true); }
-  else if (/^vr(tilt|turn|zoom)$/.test(e.target.id)) {
-    const k = e.target.id.slice(2), val = +e.target.value; vr.aim = Object.assign({}, vr.aim, { [k]: val }); vrAimSet(vr.aim);
-    const o = e.target.parentNode.querySelector('output'); if (o) o.textContent = (k === 'zoom' ? val.toFixed(2) : val) + (k === 'zoom' ? '×' : '°');
-    vrUpdate(true);
-  }
 }
 async function vrClick(e) {
   const b = e.target.closest('[data-vr]'); if (!b || !vr) return;
@@ -1952,8 +1936,6 @@ async function vrClick(e) {
   if (k === 'addvid') { const f = await vrPick(); const v = f.find(vrIsVideo); if (!v) return; f.forEach(x => vrFiles.set(x.name, x)); if (vr.url) URL.revokeObjectURL(vr.url); vr.video = v; vr.name = v.name; vr.url = URL.createObjectURL(v); vr.err = null; vrRender(); return; }
   if (k === 'clip') { const c = vr.clips.find(x => x.name === b.dataset.n); if (c) vrOpen([c.video, c.srt].filter(Boolean)); return; }
   if (k === 'mark') { vrMark(); return; }
-  if (k === 'aim') { vr.aimOpen = !vr.aimOpen; if (vr.aimOpen) { const v = vrVideo(); if (v) v.pause(); if (vr.aim.tilt == null) vr.aim = Object.assign({}, vr.aim, { tilt: r0(vrCam(vrAt(vr.t)).tilt) }); } vrRender(); return; }
-  if (k === 'aimreset') { vr.aim = {}; vrAimSet({}); vrRender(); return; }
 }
 map.on('dragstart', () => { if (vr && vr.follow) { vr.follow = false; const c = document.getElementById('vrfollow'); if (c) c.checked = false; } });
 /* Save a marker where the drone is, with a still from the video and a link back to this second. */
@@ -1975,97 +1957,6 @@ async function vrMark() {
   }
   openMarker(m.id, true);
   toast('Marked ' + fmtTime(t) + '. Pick a type and name; the marker links back to this moment in the video.');
-}
-/* ----- mission and markers drawn into the video -----
-   Each frame, the camera is placed at the drone's position and height (from the .SRT) and points it at the camera's
-   heading and tilt. If the .SRT records gimbal angles they are used; otherwise heading follows the direction of travel
-   and tilt comes from the mission (or what you set under Line up). Heights are relative to the takeoff spot, the same
-   way the mission and DJI Fly count them, so it lines up best when the video was taken from that takeoff spot. */
-function vrAimGet() { try { return (JSON.parse(localStorage.getItem('planner.vraim')) || {})[vr.name] || {}; } catch (e) { return {}; } }
-function vrAimSet(a) { try { const all = JSON.parse(localStorage.getItem('planner.vraim')) || {}; all[vr.name] = a; localStorage.setItem('planner.vraim', JSON.stringify(all)); } catch (e) {} }
-function vrOvPrefs() { try { return Object.assign({ mission: true, markers: true }, JSON.parse(localStorage.getItem('planner.vrov')) || {}); } catch (e) { return { mission: true, markers: true }; } }
-function vrGround0() {   // ground height at takeoff, for markers and the waypoints' drop lines
-  const P = vr.pts, tk = S.terrain && S.terrain.takeoff;
-  if (tk && hav(tk, [P[0].lat, P[0].lng]) < 1500) return elevAt(tk[0], tk[1]);
-  const low = P.find(p => p.alt != null && p.alt < 2);
-  if (low) return elevAt(low.lat, low.lng);
-  return elevAt(P[0].lat, P[0].lng);   // best guess: took off under the first point
-}
-function vrMissionPts() {
-  let P = []; try { P = missionPoints() || []; } catch (e) { P = []; }
-  return P.filter(p => p && p.w && isFinite(p.w.lat)).map(p => ({ lat: p.w.lat, lng: p.w.lng, h: hzH(p), gimbal: p.gimbal != null ? p.gimbal : p.w.gimbal, orig: p.orig, extra: p.extra }));
-}
-function vrCam(at) {
-  const a = vr.aim || {}, p = at.p, P = vr.pts, n = P[Math.min(at.i + 1, P.length - 1)];
-  let yaw, tilt, src = 'est';
-  if (p.gyaw != null && p.gpitch != null) { yaw = p.gyaw; tilt = p.gpitch; src = 'srt'; }
-  else {
-    yaw = p.hdg || 0;
-    tilt = a.tilt;
-    if (tilt == null) {   // tilt from the nearest mission point, if this flight followed the open mission
-      let best = null, bd = 60;
-      (vr.mp || []).forEach(q => { const d = hav([q.lat, q.lng], [at.lat, at.lng]); if (d < bd && q.gimbal != null) { bd = d; best = q; } });
-      tilt = best ? best.gimbal : -30; src = best ? 'mission' : 'est';
-    }
-  }
-  return { yaw: yaw + (a.turn || 0), tilt, src, hfov: 2 * Math.atan(18.86 / (p.focal || 24)) * 180 / Math.PI / (a.zoom || 1) };
-}
-function vrDraw(at) {
-  const v = vrVideo(), cv = document.querySelector('#vrpanel canvas.vrov');
-  if (!v || !cv || vr.err) return;
-  const cw = v.clientWidth, ch = v.clientHeight, dpr = window.devicePixelRatio || 1;
-  cv.style.left = v.offsetLeft + 'px'; cv.style.top = v.offsetTop + 'px';
-  if (cv.width !== Math.round(cw * dpr) || cv.height !== Math.round(ch * dpr)) { cv.width = Math.round(cw * dpr); cv.height = Math.round(ch * dpr); cv.style.width = cw + 'px'; cv.style.height = ch + 'px'; }
-  const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, cw, ch);
-  const pref = vrOvPrefs(); if ((!pref.mission && !pref.markers) || !v.videoWidth || at.alt == null) return;
-  vr.mp = vrMissionPts();
-  // where the picture sits inside the element (letterboxed)
-  const sc = Math.min(cw / v.videoWidth, ch / v.videoHeight), W = v.videoWidth * sc, H = v.videoHeight * sc, ox = (cw - W) / 2, oy = (ch - H) / 2;
-  const cam = vrCam(at), t = Math.PI / 180, cy = Math.cos(cam.yaw * t), sy = Math.sin(cam.yaw * t), cp = Math.cos(cam.tilt * t), sp = Math.sin(cam.tilt * t);
-  const F = [sy * cp, cy * cp, sp], R = [cy, -sy, 0], U = [R[1] * F[2] - R[2] * F[1], R[2] * F[0] - R[0] * F[2], R[0] * F[1] - R[1] * F[0]];
-  const foc = (W / 2) / Math.tan(cam.hfov / 2 * t), kx = 111320 * Math.cos(at.lat * t), ky = 110540;
-  const proj = (lat, lng, h) => {
-    const d = [(lng - at.lng) * kx, (lat - at.lat) * ky, h - at.alt];
-    const z = d[0] * F[0] + d[1] * F[1] + d[2] * F[2]; if (z < 1) return null;
-    return { x: ox + W / 2 + (d[0] * R[0] + d[1] * R[1] + d[2] * R[2]) / z * foc, y: oy + H / 2 - (d[0] * U[0] + d[1] * U[1] + d[2] * U[2]) / z * foc, z, dist: Math.hypot(d[0], d[1], d[2]) };
-  };
-  const onPic = q => q && q.x > ox - 40 && q.x < ox + W + 40 && q.y > oy - 40 && q.y < oy + H + 40;
-  const g0 = vrGround0();
-  g.save(); g.beginPath(); g.rect(ox, oy, W, H); g.clip();
-  g.lineJoin = g.lineCap = 'round'; g.font = '600 12px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
-  if (pref.mission && vr.mp && vr.mp.length) {
-    const M = vr.mp;
-    // the route, sampled so it bends correctly through the lens and stops at the camera
-    const stroke = (pts, w, c) => { g.strokeStyle = c; g.lineWidth = w; g.beginPath(); let pen = false; pts.forEach(q => { if (!q) { pen = false; return; } if (pen) g.lineTo(q.x, q.y); else { g.moveTo(q.x, q.y); pen = true; } }); g.stroke(); };
-    const line = [];
-    for (let i = 0; i < M.length; i++) {
-      const a = M[i], b = M[i + 1]; line.push(proj(a.lat, a.lng, a.h));
-      if (!b) break;
-      for (let k = 1; k < 10; k++) { const f = k / 10; line.push(proj(a.lat + (b.lat - a.lat) * f, a.lng + (b.lng - a.lng) * f, a.h + (b.h - a.h) * f)); }
-    }
-    stroke(line, 5, 'rgba(0,0,0,.55)'); stroke(line, 2.5, '#ff922b');
-    let n = 0;
-    M.forEach((q, i) => {
-      if (q.extra) return; n++;
-      const s = proj(q.lat, q.lng, q.h); if (!onPic(s) || s.dist > 3000) return;
-      if (g0 != null) { const e = elevAt(q.lat, q.lng); if (e != null) { const gq = proj(q.lat, q.lng, e - g0); if (gq) { g.setLineDash([3, 4]); g.strokeStyle = 'rgba(255,255,255,.75)'; g.lineWidth = 1.2; g.beginPath(); g.moveTo(s.x, s.y); g.lineTo(gq.x, gq.y); g.stroke(); g.setLineDash([]); } } }
-      const r = Math.max(9, Math.min(14, 1500 / s.dist));
-      g.fillStyle = '#e8590c'; g.strokeStyle = '#fff'; g.lineWidth = 2; g.beginPath(); g.arc(s.x, s.y, r, 0, 7); g.fill(); g.stroke();
-      g.fillStyle = '#fff'; g.font = '700 ' + (n > 99 ? 9 : 11) + 'px system-ui, sans-serif'; g.fillText(String(n), s.x, s.y + 0.5); g.font = '600 12px system-ui, sans-serif';
-    });
-  }
-  if (pref.markers && g0 != null) {
-    markers.forEach(m => {
-      if (mkVis.hidden[m.type] || !isFinite(m.lat)) return;
-      const e = elevAt(m.lat, m.lng); if (e == null) return;
-      const s = proj(m.lat, m.lng, e - g0); if (!onPic(s) || s.dist > 2500) return;
-      const T = MK_TYPES[m.type] || MK_TYPES.general;
-      g.fillStyle = T.color; g.strokeStyle = '#fff'; g.lineWidth = 2; g.beginPath(); g.arc(s.x, s.y, 6, 0, 7); g.fill(); g.stroke();
-      const label = m.name || T.label, w = g.measureText(label).width + 10;
-      g.fillStyle = 'rgba(0,0,0,.6)'; g.fillRect(s.x - w / 2, s.y - 25, w, 17); g.fillStyle = '#fff'; g.fillText(label, s.x, s.y - 16);
-    });
-  }
-  g.restore();
 }
 /* Drag the corner to resize the replay panel. */
 function vrSizeGet() { try { return JSON.parse(localStorage.getItem('planner.vrsize')) || {}; } catch (e) { return {}; } }
