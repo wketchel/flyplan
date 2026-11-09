@@ -8,7 +8,7 @@ const CAMERAS = {
   wide: { label: 'Wide 24 mm (1x)', f: 24, px: 8192 },
   tele: { label: 'Medium tele 70 mm (3x)', f: 70, px: 8064 },
 };
-const APP_VERSION = '1.56';
+const APP_VERSION = '1.57';
 const MAX_ALT = 121.92;                          // 400 ft
 const HZ_DEFAULTS = { over: { top: 15.24, buf: 15.24 }, nofly: { top: 0, buf: 10 } };
 const STOP_PENALTY_S = 2.5;                      // time lost decelerating at a stop-and-turn waypoint
@@ -954,6 +954,7 @@ map.on('moveend', () => { const c = map.getCenter(); S.view = { c: [c.lat, c.lng
 
 let draw = null;   // { tool, pts }
 const HINTS = {
+  parcel: 'Tap a parcel to see its owner and acreage, then add it. Tap Done when finished.',
   waypoint: `Tap the map to add waypoints. ${DRAG} a waypoint to move it.`,
   rect: 'Tap one corner, then the opposite corner.',
   polygon: 'Tap each corner of the area, then press Finish.',
@@ -971,6 +972,7 @@ function featuresLocked() { return !!draw; }
 function setTool(t) {
   if (draw && draw.tool === 'measure' && t !== 'measure') stopMeasure();
   if (draw && draw.tool === 'shapeedit' && t !== 'shapeedit') shEditId = null;
+  if (draw && draw.tool === 'parcel' && t !== 'parcel' && typeof parcelLayer !== 'undefined') { parcelLayer.clearLayers(); map.closePopup(); }
   draw = t ? { tool: t, pts: [] } : null;
   renderTools(); renderTemp(); renderMap(); if (typeof renderMarkers === 'function') renderMarkers(); if (typeof renderShapes === 'function') renderShapes();
   const h = document.getElementById('drawhint');
@@ -993,6 +995,8 @@ map.on('click', e => {
     draw.pts.push(p); renderTemp(); renderTools();
   } else if (draw.tool === 'measure') {
     measureAdd(p);
+  } else if (draw.tool === 'parcel') {
+    parcelLookup(e.latlng);
   } else if (draw.tool === 'marker') {
     setTool(null); const nm = addMarker(p); openMarker(nm.id, true);
   } else if (draw.tool === 'takeoff') {
@@ -1542,6 +1546,59 @@ function commit(fit) {
   segStore();
   if (multi() && S.split.on) { const n = missionParts().length; if (S.split.sel >= n) S.split.sel = -1; }
   save(); renderMap(); renderPanel(); renderTools(); airSchedule(); }
+
+/* ---------- property lines ----------
+   County appraisal district parcels for Texas, from the Texas Geographic Information Office (StratMap Land Parcels).
+   Tap a parcel to look it up; add it as a property boundary. Appraisal maps are close but not survey-accurate. */
+const PARCEL_URL = 'https://feature.geographic.texas.gov/arcgis/rest/services/Parcels/stratmap_land_parcels_48_most_recent/MapServer/identify';
+const parcelLayer = L.layerGroup().addTo(map);
+let parcelReq = 0;
+function parcelTitle(a) {
+  const own = String(a.OWNER_NAME || '').trim();
+  return own && own !== 'Null' ? own.replace(/\b([A-Z])([A-Z]+)\b/g, (m, x, y) => x + y.toLowerCase()) : 'Parcel ' + (a.PROP_ID || '');
+}
+function parcelNum(v) { const n = parseFloat(v); return isFinite(n) && n > 0 ? n : null; }
+function parcelRings(geom) {   // outer rings only, as [lat, lng]
+  const rings = (geom && geom.rings) || [];
+  return rings.filter(r => { let a = 0; for (let i = 0; i < r.length; i++) { const p = r[i], q = r[(i + 1) % r.length]; a += p[0] * q[1] - q[0] * p[1]; } return a < 0 && r.length >= 4; })
+    .map(r => { const pts = r.map(p => [+p[1].toFixed(7), +p[0].toFixed(7)]); if (pts.length > 1 && pts[0][0] === pts[pts.length - 1][0] && pts[0][1] === pts[pts.length - 1][1]) pts.pop(); return pts; });
+}
+function parcelLookup(ll) {
+  const my = ++parcelReq, b = map.getBounds(), sz = map.getSize();
+  const url = PARCEL_URL + '?geometry=' + ll.lng.toFixed(6) + ',' + ll.lat.toFixed(6) + '&geometryType=esriGeometryPoint&sr=4326&layers=all:0&tolerance=1' +
+    '&mapExtent=' + [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].map(v => v.toFixed(6)).join(',') + '&imageDisplay=' + sz.x + ',' + sz.y + ',96&returnGeometry=true&f=json';
+  L.popup({ closeButton: false }).setLatLng(ll).setContent('<div class="hzpop">Looking up the parcel…</div>').openOn(map);
+  fetch(url).then(r => r.json()).then(j => {
+    if (my !== parcelReq) return;
+    if (j.error) throw new Error(j.error.message || 'lookup failed');
+    const res = (j.results || []).filter(x => x.geometry && x.geometry.rings);
+    if (!res.length) { L.popup({ closeButton: false }).setLatLng(ll).setContent('<div class="hzpop">No parcel found here. This lookup covers Texas only.</div>').openOn(map); return; }
+    parcelShow(res[0], ll);
+  }).catch(e => { if (my === parcelReq) L.popup({ closeButton: false }).setLatLng(ll).setContent(`<div class="hzpop">Couldn’t look up the parcel (${esc((e && e.message) || 'no connection')}). This needs internet.</div>`).openOn(map); });
+}
+function parcelShow(r, ll) {
+  const a = r.attributes || {}, rings = parcelRings(r.geometry);
+  parcelLayer.clearLayers();
+  rings.forEach(R => L.polygon(R, { color: '#ffd43b', weight: 3, fillColor: '#ffd43b', fillOpacity: 0.12, dashArray: '6 5', interactive: false }).addTo(parcelLayer));
+  const src = 'parcel:' + (a.COUNTY || '') + ':' + (a.PROP_ID || a.GEO_ID || a.objectid), have = shapes.some(s => s.src === src);
+  const deed = parcelNum(a.LEGAL_AREA), gis = rings.reduce((t, R) => t + shArea(R), 0) / 4046.86;
+  const acres = v => v == null ? '?' : (v >= 100 ? Math.round(v) : r1(v)).toLocaleString();
+  const legal = String(a.LEGAL_DESC || '').replace(/\bNull\b/g, '').trim();
+  const html = `<div class="hzpop"><b>${esc(parcelTitle(a))}</b>${esc(String(a.COUNTY || '').toLowerCase().replace(/\b\w/g, c => c.toUpperCase()))} County · ID ${esc(a.PROP_ID || '')}${a.GEO_ID && a.GEO_ID !== 'Null' ? ' (' + esc(a.GEO_ID) + ')' : ''}
+    <small>${deed ? acres(deed) + ' deeded acres · ' : ''}${acres(gis)} acres mapped${legal ? '<br>' + esc(legal) : ''}${a.TAX_YEAR ? '<br>Appraisal district data, ' + esc(a.TAX_YEAR) : ''}</small>
+    ${have ? '<small><b>Already in your boundaries.</b></small>' : `<button class="btn small primary paradd" style="margin-top:8px">Add as property boundary</button>`}</div>`;
+  const pop = L.popup({ closeButton: false, maxWidth: 280 }).setLatLng(ll).setContent(html).openOn(map);
+  const btn = pop.getElement() && pop.getElement().querySelector('.paradd');
+  if (btn) btn.onclick = () => {
+    const t0 = Date.now();
+    rings.forEach((R, i) => shapes.push({ id: 's' + t0 + '_' + i, kind: 'area', type: 'boundary', name: parcelTitle(a) + (rings.length > 1 ? ' (' + (i + 1) + ')' : ''), src,
+      notes: `${String(a.COUNTY || '')} County appraisal parcel ${a.PROP_ID || ''}${a.GEO_ID && a.GEO_ID !== 'Null' ? ' (' + a.GEO_ID + ')' : ''}. ${deed ? acres(deed) + ' deeded acres. ' : ''}${legal ? legal + '. ' : ''}From TxGIO StratMap Land Parcels${a.TAX_YEAR ? ' (' + a.TAX_YEAR + ')' : ''}; appraisal maps are not survey-accurate.`,
+      pts: R }));
+    if (mkVis.shapes === false) { mkVis.shapes = true; mkSaveVis(); }
+    shSave(); renderShapes(); parcelLayer.clearLayers(); map.closePopup();
+    toast('Added ' + parcelTitle(a) + ' as a property boundary. Tap another parcel or Done.');
+  };
+}
 
 /* ---------- flight weather ----------
    Hour-by-hour conditions for the mission area from Open-Meteo (wind at 10, 80 and 120 m, so the wind at your flying
@@ -3118,7 +3175,7 @@ function renderMarkerList() {
       ${ftSel ? '' : `<button class="btn small" data-l2="go" data-id="${m.id}">Go to</button><button class="btn small" data-l2="edit" data-id="${m.id}">Edit</button>`}</div>`;
   }).join('') + '</div>';
   h += `<div class="subrow"><h3 class="subh">Boundaries, Lines, and Hazards · ${shapes.length}</h3>${shapes.length ? (ftSel ? `<button class="btn small" data-l2="selalls">${shapes.every(x => ftSel.s.has(x.id)) ? 'None' : 'All'}</button>` : '<button class="btn small" data-l2="selon">Select…</button>') : ''}</div>
-    <div class="btns" style="margin-bottom:8px"><button class="btn" data-l2="barea">Draw area</button><button class="btn" data-l2="bline">Draw line</button><button class="btn" data-l2="hfind">Find power lines & towers…</button></div>
+    <div class="btns" style="margin-bottom:8px"><button class="btn" data-l2="barea">Draw area</button><button class="btn" data-l2="bline">Draw line</button><button class="btn" data-l2="parcels">Import property lines…</button><button class="btn" data-l2="hfind">Find power lines & towers…</button></div>
     <label class="chk"><input type="checkbox" id="shall"${mkVis.shapes !== false ? ' checked' : ''}>Show boundaries, lines, and hazards on the map</label>`;
   if (shapes.length) h += '<div class="mlist">' + shapes.map(s => {
     const t = shType(s);
@@ -3164,6 +3221,7 @@ function markerListClick(e) {
   if (k === 'add') { sheet.hidden = true; setTool('marker'); return; }
   if (k === 'barea' || k === 'bline') { sheet.hidden = true; setTool(k); return; }
   if (k === 'hfind') { openFindHazards(); return; }
+  if (k === 'parcels') { sheet.hidden = true; setTool('parcel'); return; }
   if (k === 'sgo' || k === 'sedit') { const sh = shapes.find(x => x.id === b.dataset.id); if (!sh) return; if (k === 'sedit') { openShapeEditor(sh.id); return; } sheet.hidden = true; map.fitBounds(L.latLngBounds(sh.pts).pad(0.15)); return; }
   if (k === 'here' && S.home) { const nm = addMarker(S.home); openMarker(nm.id, true); return; }
   if (k === 'vis') { const v = b.dataset.v; if (mkVis.hidden[v]) delete mkVis.hidden[v]; else mkVis.hidden[v] = true; mkSaveVis(); renderMarkers(); renderMarkerList(); return; }
