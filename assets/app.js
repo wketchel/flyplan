@@ -8,7 +8,7 @@ const CAMERAS = {
   wide: { label: 'Wide 24 mm (1x)', f: 24, px: 8192 },
   tele: { label: 'Medium tele 70 mm (3x)', f: 70, px: 8064 },
 };
-const APP_VERSION = '1.55';
+const APP_VERSION = '1.56';
 const MAX_ALT = 121.92;                          // 400 ft
 const HZ_DEFAULTS = { over: { top: 15.24, buf: 15.24 }, nofly: { top: 0, buf: 10 } };
 const STOP_PENALTY_S = 2.5;                      // time lost decelerating at a stop-and-turn waypoint
@@ -1124,6 +1124,7 @@ function renderMap() {
 /* ---------- toolbar ---------- */
 const LOGO_SVG = '<svg viewBox="0 0 512 512" aria-hidden="true"><defs><linearGradient id="lgbg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1f7a5a"/><stop offset="1" stop-color="#0b3a4a"/></linearGradient></defs><rect width="512" height="512" rx="112" fill="url(#lgbg)"/><path d="M96 420 V236 H156 V420 H216 V236 H276 V420" fill="none" stroke="#fff" stroke-width="30" stroke-linejoin="round" stroke-linecap="round"/><g fill="#ff8a3d" stroke="#fff" stroke-width="8"><circle cx="96" cy="420" r="26"/><circle cx="276" cy="420" r="26"/></g><g transform="translate(366 146) scale(.9)"><path d="M-46 -46 L46 46 M46 -46 L-46 46" stroke="#fff" stroke-width="18" stroke-linecap="round"/><g fill="none" stroke="#ff8a3d" stroke-width="14"><circle cx="-50" cy="-50" r="30"/><circle cx="50" cy="-50" r="30"/><circle cx="-50" cy="50" r="30"/><circle cx="50" cy="50" r="30"/></g><rect x="-24" y="-24" width="48" height="48" rx="12" fill="#fff"/></g></svg>';
 const ICON = {
+  weather: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M7 17a4 4 0 0 1-.5-8A5.5 5.5 0 0 1 17 8a3.5 3.5 0 0 1 .5 7H7z"/><path d="M8 20l-1 2M12 20l-1 2M16 20l-1 2"/></svg>',
   print: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 9V3h10v6M7 17H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2"/><rect x="7" y="14" width="10" height="7" rx="1"/></svg>',
   sync: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 18a4.5 4.5 0 0 1-.6-9A6 6 0 0 1 18 9.5a4 4 0 0 1-.5 8.5"/><path d="M9.5 13.5a3 3 0 0 1 5.2-1.2M14.8 11v1.6h-1.6M14.5 15.5a3 3 0 0 1-5.2 1.2M9.2 18v-1.6h1.6"/></svg>',
   waypoint: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s-6-5.6-6-11a6 6 0 1 1 12 0c0 5.4-6 11-6 11z"/><circle cx="12" cy="10" r="2.2"/></svg>',
@@ -1149,10 +1150,10 @@ function renderTools() {
     b('polygon', 'Polygon', t === 'polygon') + b('poi', 'POI orbit', t === 'poi') + '</div>';
   if (t === 'polygon' || t === 'barea' || t === 'bline') html += '<div class="toolgroup">' + b('finish', 'Finish', false, draw.pts.length < (t === 'bline' ? 2 : 3)) + b('undo', 'Undo point', false, !draw.pts.length) + b('cancel', 'Cancel') + '</div>';
   else if (t && t !== 'measure') html += '<div class="toolgroup">' + b('cancel', 'Done') + '</div>';
-  html += '<div class="toolgroup">' + b('missions', 'Missions') + b('markers', 'Features') + b('sync', syLabel()) + b('measure', 'Measure', t === 'measure') + b('print', 'Print') + b('locate', 'My location') + b('layers', BASES[baseLayer].label, layerMenu) + b('offline', 'Offline maps') + b('clear', 'Clear', false, !S.wps.length && !S.shape) + '</div>';
+  html += '<div class="toolgroup">' + b('missions', 'Missions') + b('markers', 'Features') + b('sync', syLabel()) + b('measure', 'Measure', t === 'measure') + b('weather', 'Weather') + b('print', 'Print') + b('locate', 'My location') + b('layers', BASES[baseLayer].label, layerMenu) + b('offline', 'Offline maps') + b('clear', 'Clear', false, !S.wps.length && !S.shape) + '</div>';
   // The map menu opens beside the toolbar (not below it), so it never runs off the bottom of the screen.
   if (layerMenu) html += '<div class="flyout"><div class="toolgroup menu">' + Object.entries(BASES).map(([k, v]) => b('base:' + k, (k === baseLayer ? '✓ ' : '') + v.label)).join('') + '</div>' +
-    '<div class="toolgroup menu">' + b('contours', (contoursOn ? '✓ ' : '') + 'Contour lines') + '</div>' +
+    '<div class="toolgroup menu">' + b('contours', (contoursOn ? '✓ ' : '') + 'Contour lines') + b('radar', (radarOn ? '✓ ' : '') + 'Rain radar') + '</div>' +
     '<div class="toolgroup menu">' + myMaps.map(m => b('my:' + m.id, (myState(m.id).on ? '✓ ' : '') + esc(mapTitle(m)))).join('') + b('mymaps', 'My maps…') + '</div></div>';
   const tools = document.getElementById('tools');
   tools.innerHTML = html;
@@ -1174,6 +1175,7 @@ document.getElementById('tools').addEventListener('click', e => {
   if (btn.dataset.tool === 'hidetools') { setHidden('tools-hidden', true); return; }
   if (btn.dataset.tool === 'about') { openAbout(); return; }
   if (btn.dataset.tool === 'print') { openPrint(); return; }
+  if (btn.dataset.tool === 'weather') { openWeather(); return; }
   const id = btn.dataset.tool;
   if (['waypoint', 'rect', 'polygon', 'poi'].includes(id)) setTool(draw && draw.tool === id ? null : id);
   else if (id === 'finish') finishPolygon();
@@ -1189,6 +1191,8 @@ document.getElementById('tools').addEventListener('click', e => {
     layerMenu = !layerMenu; renderTools();
   } else if (id.startsWith('my:')) {
     const st = myState(id.slice(3)); st.on = !st.on; saveMyState(); applyMyMaps(); renderTools();
+  } else if (id === 'radar') {
+    setRadar(!radarOn); renderTools();
   } else if (id === 'contours') {
     setContours(!contoursOn); renderTools();
   } else if (id === 'mymaps') {
@@ -1538,6 +1542,138 @@ function commit(fit) {
   segStore();
   if (multi() && S.split.on) { const n = missionParts().length; if (S.split.sel >= n) S.split.sel = -1; }
   save(); renderMap(); renderPanel(); renderTools(); airSchedule(); }
+
+/* ---------- flight weather ----------
+   Hour-by-hour conditions for the mission area from Open-Meteo (wind at 10, 80 and 120 m, so the wind at your flying
+   height can be estimated) and NOAA's planetary K index (solar activity that degrades GPS), rated against the
+   Air 3S's limits. Advisory only. */
+const WX_LIMITS = { wind: 12, windRed: 10.7, windYel: 7.6, gustRed: 12, gustYel: 9 };   // m/s; the Air 3S resists 12 m/s
+let wx = { key: '', at: 0, data: null, kp: null, err: '', busy: false, night: false };
+function wxWhere() {
+  if (S.wps.length || multi() || S.shape) {
+    const pts = (S.wps.length ? S.wps.map(w => [w.lat, w.lng]) : S.shape.pts || [S.shape.center]).filter(Boolean);
+    if (multi()) S.segs.forEach(sg => (sg.wps || []).forEach(w => pts.push([w.lat, w.lng])));
+    if (pts.length) return { ll: centroid(pts), what: 'this mission' };
+  }
+  const c = map.getCenter(); return { ll: [c.lat, c.lng], what: 'the map center' };
+}
+function wxHeight() {   // the height the forecast is judged at: the mission's height above the ground
+  return Math.max(10, Math.min(122, S.alt || 60));
+}
+function wxWindAt(h, w10, w80, w120) {
+  if (h <= 10) return w10;
+  const lg = Math.log;
+  if (h <= 80) return w10 + (w80 - w10) * (lg(h) - lg(10)) / (lg(80) - lg(10));
+  return w80 + (w120 - w80) * (lg(h) - lg(80)) / (lg(120) - lg(80));
+}
+function openWeather() { sheetMode = 'wx'; renderWx(); sheet.hidden = false; wxLoad(false); }
+function wxLoad(force) {
+  const w = wxWhere(), key = w.ll.map(v => v.toFixed(2)).join(',');
+  if (!force && wx.key === key && wx.data && Date.now() - wx.at < 30 * 60e3) return;
+  wx.busy = true; wx.err = ''; if (sheetMode === 'wx' && !sheet.hidden) renderWx();
+  const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + w.ll[0].toFixed(4) + '&longitude=' + w.ll[1].toFixed(4) +
+    '&hourly=temperature_2m,precipitation_probability,precipitation,cloud_cover,visibility,wind_speed_10m,wind_direction_10m,wind_gusts_10m,wind_speed_80m,wind_speed_120m,wind_direction_120m,is_day' +
+    '&daily=sunrise,sunset&wind_speed_unit=ms&timezone=auto&forecast_days=3';
+  const kp = fetch('https://services.swpc.noaa.gov/products/noaa-planetary-k-index-forecast.json').then(r => r.json()).catch(() => null);
+  Promise.all([fetch(url).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }), kp]).then(([d, k]) => {
+    wx = Object.assign(wx, { key, at: Date.now(), data: d, kp: k, busy: false, err: '', what: w.what });
+    try { localStorage.setItem('planner.wx', JSON.stringify({ key, at: wx.at, data: d, kp: k, what: w.what })); } catch (e) {}
+  }).catch(e => {
+    let st = null; try { st = JSON.parse(localStorage.getItem('planner.wx')); } catch (e2) {}
+    wx.busy = false; wx.err = 'Couldn’t get the forecast (' + ((e && e.message) || 'no connection') + ').';
+    if (st && st.key === key && !wx.data) Object.assign(wx, { key, at: st.at, data: st.data, kp: st.kp, what: st.what, stale: true });
+  }).then(() => { if (sheetMode === 'wx' && !sheet.hidden) renderWx(); });
+}
+/* K index for an hour (UTC ms): the 3-hour block that contains it. */
+function wxKp(t) {
+  if (!Array.isArray(wx.kp)) return null;
+  let best = null;
+  wx.kp.forEach(r => {
+    const tag = Array.isArray(r) ? r[0] : r.time_tag, v = Number(Array.isArray(r) ? r[1] : r.kp);
+    if (!tag || !isFinite(v)) return;
+    const t0 = Date.parse(String(tag).replace(' ', 'T') + 'Z');
+    if (t >= t0 && t < t0 + 3 * 3600e3) best = v;
+  });
+  return best;
+}
+function wxHours() {
+  const d = wx.data; if (!d || !d.hourly) return [];
+  const H = d.hourly, off = (d.utc_offset_seconds || 0) * 1000, h = wxHeight(), now = Date.now();
+  const out = [];
+  H.time.forEach((tm, i) => {
+    const t = Date.parse(tm + ':00Z') - off; if (t < now - 3600e3) return;
+    const w10 = H.wind_speed_10m[i], wH = wxWindAt(h, w10, H.wind_speed_80m[i], H.wind_speed_120m[i]);
+    const gust = wH + Math.max(0, H.wind_gusts_10m[i] - w10), dir = h > 50 ? H.wind_direction_120m[i] : H.wind_direction_10m[i];
+    const r = { t, local: tm, wind: wH, gust, dir, w10, rain: H.precipitation_probability[i], mm: H.precipitation[i], temp: H.temperature_2m[i], cloud: H.cloud_cover[i], vis: H.visibility[i], day: !!H.is_day[i], kp: wxKp(t) };
+    const red = [], yel = [];
+    if (r.wind >= WX_LIMITS.windRed) red.push('wind'); else if (r.wind >= WX_LIMITS.windYel) yel.push('wind');
+    if (r.gust >= WX_LIMITS.gustRed) red.push('gusts'); else if (r.gust >= WX_LIMITS.gustYel) yel.push('gusts');
+    if (r.rain >= 50 || r.mm >= 0.25) red.push('rain'); else if (r.rain >= 20) yel.push('rain chance');
+    if (r.temp < -10 || r.temp > 40) red.push('temperature'); else if (r.temp < 2 || r.temp > 35) yel.push(r.temp < 2 ? 'cold batteries' : 'heat');
+    if (r.vis != null && r.vis < 4828) red.push('visibility'); else if (r.vis != null && r.vis < 8000) yel.push('haze');
+    if (r.kp != null && r.kp >= 6) red.push('GPS (Kp ' + r.kp.toFixed(0) + ')'); else if (r.kp != null && r.kp >= 5) yel.push('GPS (Kp ' + r.kp.toFixed(0) + ')');
+    r.level = !r.day ? 'dark' : red.length ? 'red' : yel.length ? 'yel' : 'ok';
+    r.why = red.concat(yel);
+    out.push(r);
+  });
+  return out;
+}
+function wxFmtHour(r) { const h = +r.local.slice(11, 13); return (h % 12 || 12) + (h < 12 ? ' AM' : ' PM'); }
+function wxDay(r, first) { const d = new Date(r.local.slice(0, 10) + 'T12:00:00Z'), f = new Date(first.local.slice(0, 10) + 'T12:00:00Z'), dd = Math.round((d - f) / 864e5); return dd === 0 ? 'Today' : dd === 1 ? 'Tomorrow' : d.toLocaleDateString([], { weekday: 'long', timeZone: 'UTC' }); }
+function wxWindows(hrs) {   // runs of good daylight hours, per day
+  const out = []; let cur = null;
+  hrs.forEach((r, i) => {
+    if (r.level === 'ok') { if (!cur) cur = { a: r, b: r }; else cur.b = r; }
+    if (r.level !== 'ok' || i === hrs.length - 1) { if (cur) { out.push(cur); cur = null; } }
+  });
+  return out;
+}
+const WX_ARROW = deg => `<i class="wxarr" style="transform:rotate(${(deg + 180) % 360}deg)">↑</i>`;
+function renderWx() {
+  const hrs = wxHours(), spd = v => r1(toSpd(v)), tmp = c => imp() ? Math.round(c * 9 / 5 + 32) + '°' : Math.round(c) + '°';
+  let h = `<div class="card"><h2>Flight weather</h2>`;
+  if (wx.busy && !wx.data) h += '<p class="note">Getting the forecast…</p>';
+  if (wx.err) h += `<div class="status${wx.data ? '' : ' bad'}">${esc(wx.err)}${wx.data ? ' Showing the forecast from ' + new Date(wx.at).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) + '.' : ''}</div>`;
+  if (hrs.length) {
+    const now = hrs[0], first = hrs[0];
+    const lab = { ok: 'Good to fly', yel: 'Marginal', red: 'Not recommended', dark: 'Dark' }[now.level];
+    h += `<p class="note">For ${esc(wx.what || 'this area')} at ${fmtLen(wxHeight())} above the ground (your mission height). Air 3S wind limit: ${spd(WX_LIMITS.wind)} ${SPD()}.</p>
+      <div class="wxnow ${now.level}"><b>Now: ${lab}</b><span>Wind ${spd(now.wind)} ${SPD()} at height (${spd(now.w10)} at the ground), gusts ${spd(now.gust)} · ${now.rain}% rain · ${tmp(now.temp)}${now.why.length ? ' · ' + esc(now.why.join(', ')) : ''}</span></div>`;
+    const wins = wxWindows(hrs).slice(0, 4);
+    h += `<h3 class="subh">Best times to fly</h3>${wins.length ? '<ul class="wxwin">' + wins.map(w => `<li><b>${wxDay(w.a, first)}</b> ${wxFmtHour(w.a)} – ${wxFmtHour({ local: w.b.local.slice(0, 11) + String((+w.b.local.slice(11, 13) + 1) % 24).padStart(2, '0') })}</li>`).join('') + '</ul>' : '<p class="note">No good daylight hours in the next two days.</p>'}`;
+    h += `<div class="wxtbl"><div class="wxrow hd"><span></span><span>Wind at height</span><span>Gusts</span><span>Rain</span><span>Temp</span><span>Clouds</span></div>`;
+    let lastDay = '';
+    hrs.slice(0, 54).forEach(r => {
+      if (r.level === 'dark' && !wx.night) return;
+      const dl = wxDay(r, first);
+      if (dl !== lastDay) { h += `<div class="wxday">${dl}</div>`; lastDay = dl; }
+      h += `<div class="wxrow ${r.level}" title="${esc(r.why.join(', '))}"><span><i class="wxdot"></i>${wxFmtHour(r)}</span><span>${WX_ARROW(r.dir)}${spd(r.wind)}</span><span>${spd(r.gust)}</span><span>${r.rain}%</span><span>${tmp(r.temp)}</span><span>${r.cloud}%</span></div>`;
+    });
+    h += `</div><label class="chk" style="margin-top:8px"><input type="checkbox" id="wxnight"${wx.night ? ' checked' : ''}>Show night hours</label>
+      <p class="note">Green: good. Yellow: watch it (wind near the limit, some rain chance, cold or hot batteries, haze or elevated solar activity that can upset GPS). Red: don't fly. Wind speeds are in ${SPD()}; the arrow points the way the wind is blowing. Overcast skies are fine for mapping and give even light.</p>
+      <p class="note">Forecast: Open-Meteo (${new Date(wx.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}). Solar activity: NOAA SWPC. Check conditions on site before flying.</p>`;
+  }
+  h += `<div class="btns"><button class="btn" data-wx="radar">${radarOn ? 'Hide' : 'Show'} rain radar</button><button class="btn" data-wx="refresh"${wx.busy ? ' disabled' : ''}>${wx.busy ? 'Updating…' : 'Refresh'}</button><button class="btn primary" data-wx="close">Close</button></div></div>`;
+  sheet.innerHTML = h;
+}
+function wxClick(e) {
+  if (e.target === sheet) { sheet.hidden = true; return; }
+  if (e.target.id === 'wxnight') { wx.night = e.target.checked; renderWx(); return; }
+  const b = e.target.closest('[data-wx]'); if (!b || b.disabled) return;
+  const k = b.dataset.wx;
+  if (k === 'close') sheet.hidden = true;
+  else if (k === 'refresh') wxLoad(true);
+  else if (k === 'radar') { setRadar(!radarOn); renderTools(); if (radarOn) sheet.hidden = true; else renderWx(); }
+}
+try { const st = JSON.parse(localStorage.getItem('planner.wx')); if (st && st.data) Object.assign(wx, { key: st.key, at: st.at, data: st.data, kp: st.kp, what: st.what }); } catch (e) {}
+/* ----- rain radar: NOAA NEXRAD composite (US), refreshed every 5 minutes ----- */
+let radarOn = false, radarTimer = null;
+const radarLayer = L.tileLayer('https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png?t={t}', { t: () => Math.floor(Date.now() / 300000), maxNativeZoom: 10, maxZoom: 22, opacity: 0.6, zIndex: 18, attribution: 'Radar: NOAA NEXRAD via Iowa Environmental Mesonet' });
+function setRadar(on) {
+  radarOn = on; clearInterval(radarTimer);
+  if (on) { radarLayer.addTo(map); radarTimer = setInterval(() => radarLayer.redraw(), 300000); toast('Rain radar on (updates every 5 minutes)'); }
+  else if (map.hasLayer(radarLayer)) map.removeLayer(radarLayer);
+}
 
 /* ---------- print ----------
    Prints what's on the map (basemap, your maps, features, the mission) on a page with a title, scale bar, north arrow
@@ -1964,6 +2100,7 @@ sheet.addEventListener('click', e => {
   if (sheetMode === 'shape') { shapeClick(e); return; }
   if (sheetMode === 'hfind') { hfClick(e); return; }
   if (sheetMode === 'print') { printClick(e); return; }
+  if (sheetMode === 'wx') { wxClick(e); return; }
   if (sheetMode === 'sync') { syncClick(e); return; }
   if (e.target === sheet) { if (send.step !== 'sending') sheet.hidden = true; return; }
   const r = e.target.closest('input[name=pm]');
