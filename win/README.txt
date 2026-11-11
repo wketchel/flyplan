@@ -1,4 +1,4 @@
-FlyPlan: Mapping & Waypoints for Windows  (version 1.35)
+FlyPlan: Mapping & Waypoints for Windows  (version 1.63)
 
 Plans DJI waypoint and mapping missions and sends them to the controller over USB.
 Not made by or affiliated with DJI. No warranty: check every route in DJI Fly and fly at your own risk.
@@ -31,5 +31,14 @@ SYNC WITH A TABLET (Google Drive)
 YOUR OWN ORTHOMOSAIC
 - Map menu > My maps > Import MBTiles. The file is read where it is, so leave
   it in place.
+- Or Import GeoTIFF for a WebODM .tif/.tiff. FlyPlan writes an MBTiles file
+  next to the original (the .tif is not changed) and adds it as a map section.
+  This needs GDAL: install QGIS or OSGeo4W, or place a GDAL folder next to
+  FlyPlan.exe (for example gdal\bin\gdal_translate.exe). FlyPlan does not
+  include GDAL.
+- Or From WebODM: sign in to WebODM (usually http://localhost:8000 when it
+  runs on this PC), pick a finished task, and choose where to save its
+  orthophoto. FlyPlan downloads it and makes the map next to it. Your
+  password isn't saved; the sign-in lasts a few hours.
 
 The app's own data lives in %LOCALAPPDATA%\Waypoint Planner.

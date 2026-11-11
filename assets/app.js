@@ -8,7 +8,7 @@ const CAMERAS = {
   wide: { label: 'Wide 24 mm (1x)', f: 24, px: 8192 },
   tele: { label: 'Medium tele 70 mm (3x)', f: 70, px: 8064 },
 };
-const APP_VERSION = '1.62';
+const APP_VERSION = '1.63';
 const MAX_ALT = 121.92;                          // 400 ft
 const HZ_DEFAULTS = { over: { top: 15.24, buf: 15.24 }, nofly: { top: 0, buf: 10 } };
 const STOP_PENALTY_S = 2.5;                      // time lost decelerating at a stop-and-turn waypoint
@@ -2457,6 +2457,7 @@ window.onNative = function (json) {
   if (m.type === 'imported') { if (m.purpose === 'markers') importMarkers(m); else importMission(m); return; }
   if (m.type === 'places') { showPlaces(m); return; }
   if (m.type === 'maps' || m.type === 'mbProgress' || m.type === 'mbError') { mapsMsg(m); return; }
+  if (m.type === 'odm') { odmMsg(m); return; }
   if (m.type === 'mapCov') { covMsg(m); return; }
   if (m.type === 'usgsZoom') { setUsgsMax(m.zoom); return; }
   if (/^sync/.test(m.type) || m.type === 'resume') { syncMsg(m); return; }
@@ -3084,14 +3085,16 @@ function applyMyMaps() {
 function openMyMaps() { sheetMode = 'maps'; myArmed = null; renderMyMaps(); sheet.hidden = false; if (native && native.listMaps) native.listMaps(); }
 function renderMyMaps() {
   let h = `<div class="card"><h2>My maps</h2>
-    <p class="note">${DESKTOP ? 'Add your own high-resolution basemap, such as an orthophoto from WebODM or QGIS saved as <b>MBTiles</b>. The PC reads the file where it is (it isn’t copied), so leave it in place, for example in your Google Drive folder. It shows on top of the regular map.' : 'Add your own high-resolution basemap, such as an orthophoto from WebODM. In WebODM, export the orthophoto as <b>MBTiles</b> and copy the file to this tablet. Maps are stored in the app, work without internet, and show on top of the regular map.'}</p>`;
+    <p class="note">${DESKTOP ? 'Add your own high-resolution basemap, such as an orthophoto from WebODM or QGIS saved as <b>MBTiles</b>. The PC reads the file where it is (it isn’t copied), so leave it in place, for example in your Google Drive folder. It shows on top of the regular map.' + (native && native.importGeotiff ? ' On Windows you can also import a WebODM <b>GeoTIFF</b> (.tif). FlyPlan writes an MBTiles file next to it (the .tif is not changed). That needs GDAL — install QGIS or OSGeo4W, or put a GDAL folder next to FlyPlan.exe. FlyPlan does not include GDAL.' : '') : 'Add your own high-resolution basemap, such as an orthophoto from WebODM. In WebODM, export the orthophoto as <b>MBTiles</b> and copy the file to this tablet. Maps are stored in the app, work without internet, and show on top of the regular map.'}</p>`;
   if (myImport) {
     const pct = myImport.total > 0 ? Math.floor(100 * myImport.done / myImport.total) : null;
-    h += `<div class="status${myImport.error ? ' bad' : ''}">${myImport.error ? esc(myImport.error) : 'Copying the map into the app… ' + (pct != null ? pct + '%' : fmtBytes(myImport.done))}</div>`;
+    const work = myImport.message ? esc(myImport.message) + (pct != null ? ' ' + pct + '%' : '') : 'Copying the map into the app… ' + (pct != null ? pct + '%' : fmtBytes(myImport.done));
+    h += `<div class="status${myImport.error ? ' bad' : ''}">${myImport.error ? esc(myImport.error) : work}</div>`;
     if (pct != null && !myImport.error) h += `<div class="bar"><i style="width:${pct}%"></i></div>`;
   }
   const busy = myImport && !myImport.error;
-  h += `<div class="btns" style="margin-bottom:6px"><button class="btn" data-m="close">Close</button><button class="btn primary" data-m="import"${busy ? ' disabled' : ''}>Import MBTiles…</button></div>`;
+  h += `<div class="btns" style="margin-bottom:6px"><button class="btn" data-m="close">Close</button><button class="btn primary" data-m="import"${busy ? ' disabled' : ''}>Import MBTiles…</button>${native && native.importGeotiff ? `<button class="btn" data-m="importTif"${busy ? ' disabled' : ''}>Import GeoTIFF…</button>` : ''}${native && native.odmList ? `<button class="btn" data-m="odm"${busy ? ' disabled' : ''}>From WebODM…</button>` : ''}</div>`;
+  if (myOdm) h += odmHtml(busy);
   h += `<h3 class="subh">Your maps</h3>`;
   if (myMaps.length) h += `<label class="chk"><input type="checkbox" id="covon"${covOn() ? ' checked' : ''}>Show each map's outline and date on the map</label><p class="note" style="margin-top:-4px">Newest imagery draws on top where maps overlap. Dates come from the file name (for example <b>north-2026-03-14.mbtiles</b>) unless you set one.</p>`;
   if (!native || !native.importMbtiles) h += `<p class="note">${PC ? 'Opening map files needs Microsoft Edge or Google Chrome.' : 'Importing maps works in the Android app.'}</p>`;
@@ -3123,6 +3126,21 @@ function mapsClick(e) {
   const a = b.dataset.m, id = b.dataset.id, m = myMaps.find(x => x.id === id);
   if (a === 'close') { sheet.hidden = true; return; }
   if (a === 'import') { if (native && native.importMbtiles) { myImport = null; native.importMbtiles(); } return; }
+  if (a === 'odm') { myOdm = myOdm ? null : { busy: 'Checking WebODM…' }; renderMyMaps(); if (myOdm) native.odmStatus(); return; }
+  if (a === 'odmclose') { myOdm = null; renderMyMaps(); return; }
+  if (a === 'odmlogin') {
+    const v = id => ((sheet.querySelector('#' + id) || {}).value || '').trim();
+    if (!v('odmuser') || !(sheet.querySelector('#odmpass') || {}).value) { myOdm.error = 'Enter your WebODM username and password.'; renderMyMaps(); return; }
+    native.odmLogin(v('odmurl'), v('odmuser'), sheet.querySelector('#odmpass').value); myOdm.busy = 'Signing in…'; myOdm.error = ''; renderMyMaps(); return;
+  }
+  if (a === 'odmrefresh') { native.odmList(); return; }
+  if (a === 'odmout') { native.odmSignOut(); myOdm.tasks = null; return; }
+  if (a === 'odmget') {
+    const t = (myOdm.tasks || []).find(x => x.id === b.dataset.id); if (!t) return;
+    myImport = { done: 0, total: 0, message: 'Starting the download from WebODM…' }; renderMyMaps();
+    native.odmGet(t.project, t.id, t.name); return;
+  }
+  if (a === 'importTif') { if (native && native.importGeotiff) { myImport = null; native.importGeotiff(); } return; }
   if (a === 'unlock') { native.unlockMap(id); return; }
   if (a === 'date' && m) { myDateEdit = myDateEdit === id ? null : id; renderMyMaps(); return; }
   if (a === 'dsave' && m) { const v = (sheet.querySelector('#mdate') || {}).value; if (!v) { toast('Pick a date first'); return; } mapSetDate(m, v); return; }
@@ -3137,8 +3155,43 @@ function mapsClick(e) {
   }
   renderMyMaps();
 }
+/* ----- WebODM: sign in, pick a finished task, and its orthophoto is downloaded and turned into a map (Windows) ----- */
+let myOdm = null;
+function odmMsg(m) {
+  if (!myOdm) return;
+  if (m.busy) myOdm.busy = m.busy;
+  else {
+    Object.assign(myOdm, { busy: '', url: m.url, user: m.user, signedIn: !!m.signedIn, error: m.error || '' });
+    if (m.tasks) myOdm.tasks = m.tasks;
+    if (m.signedIn && !m.tasks && !m.error && !myOdm.tasks) { native.odmList(); myOdm.busy = 'Getting your WebODM tasks…'; }
+    if (!m.signedIn) myOdm.tasks = null;
+  }
+  if (!sheet.hidden && sheetMode === 'maps') renderMyMaps();
+}
+function odmHtml(busy) {
+  const o = myOdm;
+  let h = `<div class="odm"><div class="odmhead"><b>From WebODM</b><button class="btn small" data-m="odmclose">Close</button></div>`;
+  if (o.error) h += `<div class="status bad">${esc(o.error)}</div>`;
+  if (o.busy) return h + `<p class="note">${esc(o.busy)}</p></div>`;
+  if (!o.signedIn) {
+    h += `<p class="note">Sign in with the account you use in WebODM. Its address is usually <b>http://localhost:8000</b> when WebODM runs on this PC. FlyPlan keeps the sign-in (not your password) for a few hours.</p>
+      <label class="f"><span>WebODM address</span><div class="in"><input type="text" id="odmurl" value="${esc(o.url || 'http://localhost:8000')}"></div></label>
+      <div class="row"><label class="f"><span>Username</span><div class="in"><input type="text" id="odmuser" value="${esc(o.user || '')}" autocomplete="username"></div></label>
+      <label class="f"><span>Password</span><div class="in"><input type="password" id="odmpass" autocomplete="current-password"></div></label></div>
+      <div class="btns"><button class="btn primary" data-m="odmlogin">Sign in</button></div></div>`;
+    return h;
+  }
+  h += `<p class="note" style="margin-top:0">Signed in as <b>${esc(o.user)}</b> at ${esc(o.url)}. <button class="btn small" data-m="odmrefresh">Refresh</button> <button class="btn small" data-m="odmout">Sign out</button></p>`;
+  const T = o.tasks || [];
+  if (!T.length) return h + `<p class="note">No finished tasks with an orthophoto yet.</p></div>`;
+  h += `<p class="note">Pick a task. Its orthophoto is downloaded to a folder you choose, then turned into a map next to it (needs GDAL).</p><div class="mlist">` + T.map(t => {
+    const d = t.created ? new Date(t.created) : null;
+    return `<div class="mitem"><div style="flex:1;min-width:0"><b>${esc(t.name)}</b><small>${esc(t.projectName)}${d && !isNaN(d) ? ' · ' + d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : ''}${t.sizeMb ? ' · task ' + (t.sizeMb >= 1024 ? r1(t.sizeMb / 1024) + ' GB' : Math.round(t.sizeMb) + ' MB') : ''}</small></div><button class="btn small primary" data-m="odmget" data-id="${esc(t.id)}"${busy ? ' disabled' : ''}>Get map</button></div>`;
+  }).join('') + '</div></div>';
+  return h;
+}
 function mapsMsg(m) {
-  if (m.type === 'mbProgress') myImport = { done: m.done, total: m.total };
+  if (m.type === 'mbProgress') myImport = { done: m.done, total: m.total, message: m.message };
   else if (m.type === 'mbError') myImport = { error: m.message };
   else if (m.type === 'maps') {
     myMaps = m.maps || [];

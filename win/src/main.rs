@@ -2,6 +2,8 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod core;
+mod geotiff;
+mod webodm;
 #[cfg(windows)]
 mod wpd;
 
@@ -182,6 +184,65 @@ mod app {
         std::thread::spawn(move || run_cmd(&c, &cmd, &a));
     }
 
+    fn find_gdal() -> Option<crate::geotiff::Gdal> {
+        let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.to_path_buf()));
+        crate::geotiff::find_gdal(exe_dir.as_deref(), &[])
+    }
+
+    /// GeoTIFF → MBTiles next to it, then add it to My maps.
+    fn convert_and_add(c: &Ctx, gdal: &crate::geotiff::Gdal, p: &std::path::Path) {
+        let out = match crate::geotiff::unique_mbtiles_path(p) {
+            Ok(o) => o,
+            Err(e) => { c.emit(json!({ "type": "mbError", "message": e })); return; }
+        };
+        let mut last = -1i32;
+        let res = crate::geotiff::convert(gdal, p, &out, |done, total, msg| {
+            let pct = if total > 0 { (100 * done / total) as i32 } else { 0 };
+            if pct != last {
+                last = pct;
+                c.emit(json!({ "type": "mbProgress", "done": pct, "total": 100, "message": msg }));
+            }
+        });
+        match res {
+            Ok(()) => {
+                let add = { let mut s = c.settings.lock().unwrap(); core::add_map(&mut s, &out) };
+                match add {
+                    Ok(id) => { let s = c.settings.lock().unwrap(); c.emit(core::maps_message(&s, Some(&id))); }
+                    Err(e) => c.emit(json!({ "type": "mbError", "message": format!("The map file was created, but FlyPlan couldn't open it: {e}") })),
+                }
+            }
+            Err(e) => c.emit(json!({ "type": "mbError", "message": e })),
+        }
+    }
+
+    fn odm_status(c: &Ctx, error: Option<String>) {
+        let s = c.settings.lock().unwrap();
+        let w = &s.v["webodm"];
+        c.emit(json!({ "type": "odm", "url": w["url"].as_str().unwrap_or(crate::webodm::DEFAULT_URL), "user": w["user"].as_str().unwrap_or(""),
+            "signedIn": w["token"].as_str().is_some_and(|t| !t.is_empty()), "error": error }));
+    }
+
+    fn odm_list(c: &Ctx) {
+        let (url, tok) = { let s = c.settings.lock().unwrap(); (s.v["webodm"]["url"].as_str().unwrap_or("").to_string(), s.v["webodm"]["token"].as_str().unwrap_or("").to_string()) };
+        if tok.is_empty() { odm_status(c, None); return; }
+        c.emit(json!({ "type": "odm", "busy": "Getting your WebODM tasks…" }));
+        match crate::webodm::list_tasks(&url, &tok) {
+            Ok(t) => {
+                let s = c.settings.lock().unwrap();
+                c.emit(json!({ "type": "odm", "url": url, "user": s.v["webodm"]["user"].as_str().unwrap_or(""), "signedIn": true,
+                    "tasks": t.iter().map(|x| x.to_json()).collect::<Vec<_>>() }));
+            }
+            Err(crate::webodm::OdmError::Auth) => {
+                { let mut s = c.settings.lock().unwrap(); if let Some(o) = s.v["webodm"].as_object_mut() { o.remove("token"); } s.save(); }
+                odm_status(c, Some("WebODM asked to sign in again.".into()));
+            }
+            Err(e) => {
+                let s = c.settings.lock().unwrap();
+                c.emit(json!({ "type": "odm", "url": url, "user": s.v["webodm"]["user"].as_str().unwrap_or(""), "signedIn": true, "error": e.message() }));
+            }
+        }
+    }
+
     fn run_cmd(c: &Ctx, cmd: &str, a: &Value) {
         match cmd {
             "saveKmz" => {
@@ -255,6 +316,80 @@ mod app {
                 match res {
                     Ok(id) => { let s = c.settings.lock().unwrap(); c.emit(core::maps_message(&s, Some(&id))); }
                     Err(e) => c.emit(json!({ "type": "mbError", "message": format!("Couldn't open that map: {e}") })),
+                }
+            }
+            "importGeotiff" => {
+                let Some(p) = c.dialog().set_title("Add a GeoTIFF map").add_filter("GeoTIFF / WebODM orthophoto", &["tif", "tiff"]).pick_file() else { return };
+                let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+                if ext != "tif" && ext != "tiff" {
+                    c.emit(json!({ "type": "mbError", "message": "Please choose a GeoTIFF file (.tif or .tiff)." }));
+                    return;
+                }
+                c.emit(json!({ "type": "mbProgress", "done": 0, "total": 100, "message": "Looking for GDAL…" }));
+                let Some(gdal) = find_gdal() else {
+                    c.emit(json!({ "type": "mbError", "message": crate::geotiff::GDAL_MISSING }));
+                    return;
+                };
+                convert_and_add(c, &gdal, &p);
+            }
+            // ----- WebODM: sign in, list finished tasks, download an orthophoto and turn it into a map -----
+            "odmStatus" => odm_status(c, None),
+            "odmLogin" => {
+                let url = crate::webodm::clean_url(&arg(a, 0));
+                let user = arg(a, 1).trim().to_string();
+                let pass = arg(a, 2);
+                c.emit(json!({ "type": "odm", "busy": "Signing in…" }));
+                match crate::webodm::login(&url, &user, &pass) {
+                    Ok(tok) => {
+                        { let mut s = c.settings.lock().unwrap(); s.v["webodm"] = json!({ "url": url, "user": user, "token": tok }); s.save(); }
+                        odm_list(c);
+                    }
+                    Err(e) => {
+                        { let mut s = c.settings.lock().unwrap(); s.v["webodm"] = json!({ "url": url, "user": user }); s.save(); }
+                        odm_status(c, Some(e.message()));
+                    }
+                }
+            }
+            "odmList" => odm_list(c),
+            "odmSignOut" => {
+                { let mut s = c.settings.lock().unwrap(); if let Some(o) = s.v["webodm"].as_object_mut() { o.remove("token"); } s.save(); }
+                odm_status(c, None);
+            }
+            "odmGet" => {
+                let project = a.get(0).and_then(|v| v.as_i64()).unwrap_or(0);
+                let task = arg(a, 1);
+                let name = arg(a, 2);
+                let (url, tok, dir) = { let s = c.settings.lock().unwrap(); (s.v["webodm"]["url"].as_str().unwrap_or("").to_string(), s.v["webodm"]["token"].as_str().unwrap_or("").to_string(), s.v["webodm"]["dir"].as_str().map(std::path::PathBuf::from)) };
+                if tok.is_empty() { odm_status(c, Some("Sign in to WebODM first.".into())); return; }
+                // GDAL is needed afterwards; check before a long download.
+                let Some(gdal) = find_gdal() else {
+                    c.emit(json!({ "type": "mbError", "message": crate::geotiff::GDAL_MISSING }));
+                    return;
+                };
+                let mut d = c.dialog().set_title("Save the WebODM orthophoto (the map is made next to it)").add_filter("GeoTIFF", &["tif"]).set_file_name(crate::webodm::file_name(&name));
+                if let Some(dir) = dir.filter(|d| d.is_dir()) { d = d.set_directory(dir); }
+                let Some(mut dest) = d.save_file() else { return };
+                if dest.extension().map(|e| e.to_ascii_lowercase()) != Some("tif".into()) { dest.set_extension("tif"); }
+                if let Some(parent) = dest.parent() { let mut s = c.settings.lock().unwrap(); s.v["webodm"]["dir"] = json!(parent.to_string_lossy()); s.save(); }
+                let mut last = u64::MAX;
+                let res = crate::webodm::download(&url, &tok, project, &task, &dest, |got, total| {
+                    let mb = got / 1_048_576;
+                    if total > 0 {
+                        let pct = 100 * got / total;
+                        if pct != last { last = pct; c.emit(json!({ "type": "mbProgress", "done": pct, "total": 100, "message": "Downloading from WebODM…" })); }
+                    } else if mb != last {
+                        last = mb;
+                        c.emit(json!({ "type": "mbProgress", "done": 0, "total": 0, "message": format!("Downloading from WebODM… {mb} MB") }));
+                    }
+                });
+                match res {
+                    Ok(()) => convert_and_add(c, &gdal, &dest),
+                    Err(crate::webodm::OdmError::Auth) => {
+                        { let mut s = c.settings.lock().unwrap(); if let Some(o) = s.v["webodm"].as_object_mut() { o.remove("token"); } s.save(); }
+                        c.emit(json!({ "type": "mbError", "message": "WebODM asked to sign in again. Sign in and choose the task again." }));
+                        odm_status(c, None);
+                    }
+                    Err(e) => c.emit(json!({ "type": "mbError", "message": e.message() })),
                 }
             }
             "mapCoverage" => {

@@ -359,3 +359,7 @@ select option:disabled { color: var(--muted); }
 @media (orientation: portrait){.vrpanel{left:56px;right:10px;width:auto;bottom:10px}.vrbody{padding:6px 8px 4px}.vrbody video{max-height:150px;width:auto;max-width:100%;margin:0 auto}.vrbody .note{display:none}.vrinfo small{display:none}}
 .vrgrip{position:absolute;left:0;top:0;width:22px;height:22px;cursor:nwse-resize;z-index:2;touch-action:none;background:linear-gradient(135deg,var(--muted) 0 2px,transparent 2px 5px,var(--muted) 5px 7px,transparent 7px 10px,var(--muted) 10px 12px,transparent 12px);opacity:.55;border-top-left-radius:12px}
 .vrpanel .vrhead{padding-left:24px}
+/* WebODM panel in My maps */
+.odm{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:4px 0 12px;background:var(--field)}
+.odmhead{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.odm .row{gap:8px}
